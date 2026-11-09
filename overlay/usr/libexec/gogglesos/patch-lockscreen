@@ -1,0 +1,69 @@
+#!/usr/bin/python3
+"""Goggles OS lock screen: add a green tint, the Goggles logo and a glass card behind the
+login block to Plasma's lock screen. Idempotent; re-run after plasma-workspace updates
+(an APT hook does this automatically)."""
+import pathlib, sys
+
+QML = pathlib.Path("/usr/share/plasma/shells/org.kde.plasma.desktop/contents/lockscreen/LockScreenUi.qml")
+MARK = "// Goggles OS lock screen"
+ANCHOR = "        StackView {\n            id: mainStack"
+
+BLOCK = '''        // Goggles OS lock screen: green tint, logo and glass card (patched by patch-lockscreen)
+        Rectangle {
+            id: gogglesTint
+            anchors.fill: parent
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: Qt.rgba(0.02, 0.10, 0.09, 0.15) }
+                GradientStop { position: 1.0; color: Qt.rgba(0.02, 0.12, 0.10, 0.70) }
+            }
+            opacity: lockScreenRoot.uiVisible ? 1 : 0.35
+            Behavior on opacity { OpacityAnimator { duration: Kirigami.Units.veryLongDuration } }
+        }
+        Image {
+            id: gogglesLogo
+            source: "file:///usr/share/gogglesos/logo-dark.png"
+            fillMode: Image.PreserveAspectFit
+            height: Kirigami.Units.gridUnit * 2.5
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.margins: Kirigami.Units.gridUnit * 2
+            smooth: true
+            opacity: 0.95
+        }
+        Rectangle {
+            id: gogglesCard
+            width: Math.min(parent.width * 0.9, Kirigami.Units.gridUnit * 28)
+            height: Math.min(parent.height * 0.85, Kirigami.Units.gridUnit * 28)
+            anchors.centerIn: parent
+            anchors.verticalCenterOffset: Kirigami.Units.gridUnit * 4.5
+            radius: Kirigami.Units.gridUnit * 1.25
+            color: Qt.rgba(0.03, 0.14, 0.12, 0.55)
+            border.width: 1
+            border.color: Qt.rgba(0.24, 0.86, 0.52, 0.55)
+            opacity: lockScreenRoot.uiVisible ? 1 : 0
+            visible: opacity > 0
+            Behavior on opacity { OpacityAnimator { duration: Kirigami.Units.longDuration } }
+        }
+
+'''
+
+def main():
+    if not QML.exists():
+        print(f"{QML} not found; nothing to patch")
+        return 0
+    text = QML.read_text()
+    if BLOCK + ANCHOR in text:
+        return 0                      # current design already applied
+    if MARK in text:
+        # an older Goggles block: cut it out (it always sits right before ANCHOR) and re-apply
+        start = text.index("        " + MARK)
+        end = text.index(ANCHOR, start)
+        text = text[:start] + text[end:]
+    if ANCHOR not in text:
+        print("lock screen layout changed upstream; Goggles patch skipped", file=sys.stderr)
+        return 0
+    QML.write_text(text.replace(ANCHOR, BLOCK + ANCHOR, 1))
+    print("Goggles OS lock screen applied")
+    return 0
+
+sys.exit(main())

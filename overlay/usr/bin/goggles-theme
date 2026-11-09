@@ -1,0 +1,97 @@
+#!/bin/bash
+# Goggles OS appearance switcher.
+#   goggles-theme glass            apply Glass (blur + translucency) for the current user
+#   goggles-theme lite             apply Lite (opaque, no blur) for the current user
+#   goggles-theme glass --system   set the default for new users (run as root; used by the installer)
+#   goggles-theme                  ask with a dialog
+# Both modes keep rounded corners, the dark theme, the green accent and animations.
+set -u
+MODE="${1:-}"; SCOPE="${2:-}"
+ACCENT="61,220,132"
+LNF_DEFAULTS=/usr/share/plasma/look-and-feel/org.gogglesos.desktop/contents/defaults
+CORNERS_PLUGIN=kwin4_effect_shapecorners
+[ -f /usr/lib/x86_64-linux-gnu/qt6/plugins/kwin/effects/plugins/kwin4_effect_shapecorners.so ] || CORNERS_PLUGIN=""
+
+if [ -z "$MODE" ]; then
+  MODE=$(kdialog --title "Goggles Appearance" --radiolist "Choose how Goggles OS looks:" \
+    glass "Glass - blur, translucency and smooth animations (default)" on \
+    lite  "Lite - opaque windows, no blur (faster on older GPUs)" off) || exit 0
+fi
+case "$MODE" in glass|lite) ;; *) echo "usage: goggles-theme glass|lite [--system]" >&2; exit 2;; esac
+
+if [ "$MODE" = glass ]; then
+  STYLE=kvantum; BLUR=true; ANIM=0.85; PANEL=translucent
+else
+  STYLE=Breeze;  BLUR=false; ANIM=0.6;  PANEL=opaque
+fi
+
+# write <file> <group> <key> <value>  (kwriteconfig6 handles nested groups)
+write() {
+  local file="$1" group="$2" key="$3" val="$4" g=()
+  IFS='/' read -ra parts <<< "$group"; for p in "${parts[@]}"; do g+=(--group "$p"); done
+  kwriteconfig6 --file "$file" "${g[@]}" --key "$key" "$val"
+}
+
+apply() {  # $1 = config dir (e.g. /etc/xdg or ~/.config)
+  local C="$1"
+  mkdir -p "$C/Kvantum"
+  write "$C/gogglesosrc" Theme Mode "$MODE"
+  write "$C/kdeglobals" KDE widgetStyle "$STYLE"
+  write "$C/kdeglobals" KDE AnimationDurationFactor "$ANIM"
+  write "$C/kdeglobals" General AccentColor "$ACCENT"
+  write "$C/kdeglobals" General accentColorFromWallpaper false
+  write "$C/Kvantum/kvantum.kvconfig" General theme GogglesGlass
+  # Compositor effects
+  write "$C/kwinrc" Plugins blurEnabled "$BLUR"
+  write "$C/kwinrc" Plugins contrastEnabled "$BLUR"
+  write "$C/kwinrc" Plugins translucencyEnabled "$BLUR"
+  write "$C/kwinrc" Effect-blur BlurStrength 10
+  write "$C/kwinrc" Effect-blur NoiseStrength 4
+  write "$C/kwinrc" Effect-translucency MoveResize 85
+  write "$C/kwinrc" Plugins magiclampEnabled true
+  write "$C/kwinrc" Plugins squashEnabled false
+  write "$C/kwinrc" Plugins scaleEnabled true
+  write "$C/kwinrc" Plugins slidingpopupsEnabled true
+  write "$C/kwinrc" Plugins wobblywindowsEnabled false
+  if [ -n "$CORNERS_PLUGIN" ]; then
+    write "$C/kwinrc" Plugins "${CORNERS_PLUGIN}Enabled" true
+    # Keys from KDE-Rounded-Corners' options.kcfg (group Round-Corners)
+    write "$C/kwinrc" Round-Corners Size 14
+    write "$C/kwinrc" Round-Corners InactiveCornerRadius 14
+    write "$C/kwinrc" Round-Corners OutlineThickness 1
+    write "$C/kwinrc" Round-Corners InactiveOutlineThickness 1
+    write "$C/kwinrc" Round-Corners ActiveOutlineUseCustom true
+    write "$C/kwinrc" Round-Corners InactiveOutlineUseCustom true
+    write "$C/kwinrc" Round-Corners OutlineColor "$ACCENT"
+    write "$C/kwinrc" Round-Corners ActiveOutlineAlpha 120
+    write "$C/kwinrc" Round-Corners InactiveOutlineColor "255,255,255"
+    write "$C/kwinrc" Round-Corners InactiveOutlineAlpha 28
+  fi
+}
+
+if [ "$SCOPE" = --system ]; then
+  [ "$(id -u)" -eq 0 ] || { echo "--system needs root" >&2; exit 1; }
+  apply /etc/xdg
+  apply /etc/skel/.config      # Kvantum and some apps only read the user's own config
+  apply /root/.config          # root-run apps (the installer, pkexec dialogs)
+  # Plasma layers the look-and-feel defaults above /etc/xdg, so set the widget style there too
+  [ -f "$LNF_DEFAULTS" ] && sed -i "s/^widgetStyle=.*/widgetStyle=$STYLE/" "$LNF_DEFAULTS"
+  # The installer creates the user before this runs, so restyle existing accounts too
+  while IFS=: read -r user _ uid gid _ home _; do
+    [ "$uid" -ge 1000 ] && [ "$uid" -lt 60000 ] && [ -d "$home" ] || continue
+    apply "$home/.config"
+    chown -R "$uid:$gid" "$home/.config"
+  done < /etc/passwd
+  echo "Goggles OS default appearance: $MODE"
+  exit 0
+fi
+
+apply "${XDG_CONFIG_HOME:-$HOME/.config}"
+# Apply live where possible
+qdbus6 org.kde.KWin /KWin reconfigure >/dev/null 2>&1 || true
+qdbus6 org.kde.plasmashell /PlasmaShell evaluateScript \
+  "panels().forEach(function(p){ try { p.opacity = '$PANEL'; } catch (e) {} })" >/dev/null 2>&1 || true
+if command -v kdialog >/dev/null && [ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]; then
+  kdialog --title "Goggles Appearance" --passivepopup \
+    "$( [ "$MODE" = glass ] && echo Glass || echo Lite ) mode applied. Log out and back in to restyle open apps." 6
+fi

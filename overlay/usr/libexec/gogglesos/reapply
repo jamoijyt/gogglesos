@@ -1,0 +1,8 @@
+#!/bin/sh
+# Goggles OS: re-apply customisations that package updates can undo.
+# Run by APT after every dpkg operation (/etc/apt/apt.conf.d/99gogglesos-reapply).
+/usr/libexec/gogglesos/patch-lockscreen >/dev/null 2>&1 || true
+if [ -x /usr/bin/papirus-folders ] && [ -d /usr/share/icons/Papirus-Dark ]; then
+  /usr/bin/papirus-folders -C green --theme Papirus-Dark >/dev/null 2>&1 || true
+fi
+exit 0

@@ -1,0 +1,2 @@
+// Goggles OS: keep the lock screen design and green folder icons after package updates
+DPkg::Post-Invoke { "if [ -x /usr/libexec/gogglesos/reapply ]; then /usr/libexec/gogglesos/reapply; fi"; };

@@ -1,0 +1,49 @@
+#!/bin/bash
+# Goggles OS: one-click SteamVR fixes for Linux.
+# Grants SteamVR's compositor the CAP_SYS_NICE capability so it can use
+# high-priority GPU queues (needed for asynchronous reprojection).
+# Re-run after SteamVR updates.
+set -u
+msg() { if command -v kdialog >/dev/null && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then kdialog --title "Goggles VR Setup" "$1" "$2"; else echo "$2"; fi; }
+
+steam_roots=("$HOME/.local/share/Steam" "$HOME/.steam/steam")
+libs=()
+for r in "${steam_roots[@]}"; do
+  [ -d "$r/steamapps" ] && libs+=("$r")
+  vdf="$r/steamapps/libraryfolders.vdf"
+  [ -f "$vdf" ] && while IFS= read -r p; do libs+=("$p"); done < <(grep -oP '"path"\s+"\K[^"]+' "$vdf")
+done
+
+found=()
+for l in "${libs[@]}"; do
+  f="$l/steamapps/common/SteamVR/bin/linux64/vrcompositor-launcher"
+  [ -f "$f" ] && found+=("$(readlink -f "$f")")
+done
+mapfile -t found < <(printf '%s\n' "${found[@]}" | sort -u | sed '/^$/d')
+
+STEAMVR_APPID=250820
+install_steamvr() {
+  # Steam must be running and logged in; this opens Steam's install dialog for SteamVR.
+  nohup steam "steam://install/$STEAMVR_APPID" >/dev/null 2>&1 &
+  msg --msgbox "Steam is opening the SteamVR installer.\n\nSign in to Steam if asked, finish the install, launch SteamVR once, then run Goggles VR Setup again to apply the performance fix."
+}
+
+if [ "${1:-}" = --install ] && [ ${#found[@]} -eq 0 ]; then
+  install_steamvr; exit 0
+fi
+
+if [ ${#found[@]} -eq 0 ]; then
+  if command -v kdialog >/dev/null && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && \
+     kdialog --title "Goggles VR Setup" --yesno "SteamVR isn't installed yet.\n\nInstall it now through Steam?"; then
+    install_steamvr; exit 0
+  fi
+  msg --sorry "SteamVR was not found.\n\nInstall it from Steam (Library → Tools → SteamVR), launch it once, then run Goggles VR Setup again."
+  exit 1
+fi
+
+if pkexec /usr/sbin/setcap CAP_SYS_NICE=eip "${found[@]}"; then
+  msg --msgbox "SteamVR is ready.\n\nGranted high-priority scheduling to:\n$(printf '%s\n' "${found[@]}")\n\nRe-run this after SteamVR updates."
+else
+  msg --error "Could not apply the SteamVR fix (authentication cancelled or failed)."
+  exit 1
+fi

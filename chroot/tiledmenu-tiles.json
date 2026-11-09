@@ -1,0 +1,16 @@
+[
+  {"tileType": "group", "x": 0, "y": 0, "w": 6, "h": 1, "label": "Play"},
+  {"x": 0, "y": 1, "w": 2, "h": 2, "url": "steam.desktop", "label": "Steam", "backgroundColor": "#801b2838"},
+  {"x": 2, "y": 1, "w": 2, "h": 2, "url": "goggles-vr-setup.desktop", "label": "VR Setup", "backgroundColor": "#993ddc84"},
+  {"x": 4, "y": 1, "w": 2, "h": 1, "url": "goggles-install-steamvr.desktop", "label": "Install SteamVR"},
+  {"x": 4, "y": 2, "w": 1, "h": 1, "url": "net.davidotek.pupgui2.desktop", "label": "ProtonUp"},
+  {"x": 5, "y": 2, "w": 1, "h": 1, "url": "discord.desktop", "label": "Discord", "backgroundColor": "#805865f2"},
+
+  {"tileType": "group", "x": 0, "y": 3, "w": 6, "h": 1, "label": "Create & Share"},
+  {"x": 0, "y": 4, "w": 2, "h": 2, "url": "com.obsproject.Studio.desktop", "label": "OBS Studio"},
+  {"x": 2, "y": 4, "w": 2, "h": 2, "url": "preferred://browser", "label": "Browser"},
+  {"x": 4, "y": 4, "w": 1, "h": 1, "url": "org.kde.dolphin.desktop", "label": "Files"},
+  {"x": 5, "y": 4, "w": 1, "h": 1, "url": "org.kde.konsole.desktop", "label": "Terminal"},
+  {"x": 4, "y": 5, "w": 1, "h": 1, "url": "systemsettings.desktop", "label": "Settings"},
+  {"x": 5, "y": 5, "w": 1, "h": 1, "url": "goggles-appearance.desktop", "label": "Appearance"}
+]

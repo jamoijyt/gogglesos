@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Goggles Appearance
+Comment=Switch between Glass and Lite mode
+Exec=goggles-theme
+Icon=preferences-desktop-theme
+Categories=Settings;DesktopSettings;

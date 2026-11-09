@@ -1,0 +1,9 @@
+# Everything that runs or is read inside Linux must keep LF line endings
+* text=auto eol=lf
+*.ps1 text eol=crlf
+
+# Binary files
+*.png binary
+*.webp binary
+*.svgz binary
+*.tar.gz binary

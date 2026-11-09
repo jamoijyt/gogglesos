@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Install SteamVR
+Comment=Install SteamVR through Steam, then run Goggles VR Setup
+Exec=goggles-vr-setup --install
+Icon=steam
+Categories=Game;

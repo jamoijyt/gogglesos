@@ -1,0 +1,5 @@
+[General]
+LogoPath=/usr/share/pixmaps/gogglesos-logo.png
+Name=Goggles OS
+Website=@DISTRO_URL@
+Variant=PCVR Edition

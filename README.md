@@ -1,0 +1,115 @@
+# Goggles OS
+
+A Linux distro for PC VR gaming, based on **Kubuntu 26.04 LTS** (Ubuntu + KDE Plasma).
+
+The build remasters the official Kubuntu ISO: it unpacks the live filesystem, customizes it
+in a chroot, and writes a new ISO that keeps Kubuntu's Secure Boot chain, live session and
+Calamares installer.
+
+> **Status:** early development. Test in a VM before installing on real hardware.
+> See [ROADMAP.md](ROADMAP.md) for what's planned (VR home shell, Quest streaming, Rift CV1).
+
+## What's inside
+
+| Area | What Goggles OS adds |
+|---|---|
+| VR | Steam, `steam-devices` udev rules (Index, Vive, Quest, controllers), **Goggles VR Setup** (grants SteamVR's compositor `CAP_SYS_NICE` for async reprojection), **Install SteamVR** helper |
+| GPU | Mesa + Vulkan for AMD/Intel (64- and 32-bit). The `nvidia` variant also includes NVIDIA 580 with prebuilt, signed modules (GTX 900 to RTX 40, including GTX 1080) |
+| Kernel | Stock Ubuntu kernel with `preempt=full threadirqs` (full preemption), plus SteamOS-style sysctls (`max_map_count`, no split-lock penalty, low swappiness) |
+| Gaming | GameMode, MangoHud, GOverlay, Protontricks, ProtonUp-Qt (Flatpak, for Proton-GE), Flathub enabled |
+| Apps | OBS Studio, Discord |
+| Look | **Glass** (default) or **Lite** mode, chosen in the installer and switchable with *Goggles Appearance*; frosted-glass taskbar and popups; Windows 10-style start menu (Tiled Menu); Goggles Dark colours; rounded corners; Papirus-Dark icons with green folders; green lock screen |
+| Branding | os-release, wallpaper, boot splash, live welcome screen, login, installer and slideshow, About-this-System |
+| VMs | VMware guest tools (screen resize, clipboard) |
+
+## Building (Windows + WSL2, or any Ubuntu 26.04 machine)
+
+Needs about 15 GB free inside WSL for the unpacked system and about 15 GB on the drive in
+`CACHE_DIR` / `OUTPUT_DIR` (default `D:\GogglesOS`). Edit `config.sh` to change any of these.
+
+```bash
+sudo apt install xorriso squashfs-tools imagemagick webp
+```
+
+```bash
+sudo ./build.sh
+```
+
+```bash
+sudo GPU_VARIANT=amd ./build.sh
+```
+
+The finished ISO is written to `D:\GogglesOS\output\gogglesos-26.04-<variant>-amd64.iso`.
+Flash it to a USB stick with Rufus (DD mode) or balenaEtcher.
+
+Faster rebuilds:
+
+- `sudo RESUME=1 ./build.sh` re-runs the customization on the already unpacked system
+  (use after a build fails partway through customizing).
+- `sudo REUSE_ROOTFS=1 ./build.sh` only repacks the existing system into a new ISO.
+
+On a 16 GB PC, close other apps before the compression step, and run `wsl --shutdown`
+after a build to give WSL's memory back to Windows.
+
+## Testing in a VM
+
+```powershell
+.\vmware-test-vm.ps1
+```
+
+Creates a VMware Workstation VM in `D:\GogglesOS\vmware` (UEFI + Secure Boot, 3D acceleration,
+4 CPUs, 6 GB RAM, 64 GB disk), attaches the ISO and starts it. Re-run after a rebuild to load the
+new ISO, or add `-Recreate` to start from a blank disk.
+
+`hyperv-test-vm.ps1` does the same with Hyper-V (slower: no GPU acceleration); `hyperv-keys.ps1`,
+`hyperv-click.ps1` and `hyperv-screenshot.ps1` drive that VM from scripts.
+
+## Layout
+
+```
+config.sh                     name, versions, package lists, GPU variant
+build.sh                      unpack ISO -> chroot customize -> repack ISO
+chroot/customize.sh           runs inside the live filesystem
+chroot/calamares/             installer pages (Appearance: Glass / Lite)
+chroot/calamares-show.qml     installer slideshow
+chroot/tiledmenu-tiles.json   default start-menu tiles
+branding/source/              original artwork
+branding/make-assets.sh       generates every image size from branding/source
+branding/build-installer-prompt.sh   rebuilds the live "Try or Install" screen with Goggles branding
+overlay/                      files installed into the system (/etc, /usr)
+  usr/bin/goggles-theme       Glass / Lite switcher
+  usr/local/bin/goggles-vr-setup   SteamVR setup helper
+  usr/libexec/gogglesos/      lock-screen patch + re-apply hook run after package updates
+third_party/                  pinned, checksum-verified copies of upstream tools (see its README)
+test-iso.sh                   QEMU boot test with screenshots (headless, window or browser view)
+vmware-test-vm.ps1            VMware test VM
+hyperv-*.ps1                  Hyper-V test VM and helpers
+```
+
+## Design notes
+
+- **Stock kernel instead of XanMod/Liquorix.** Ubuntu's kernel is `PREEMPT_DYNAMIC`, so
+  `preempt=full` gives the same low-latency scheduling as a "lowlatency" kernel. It also keeps
+  Secure Boot and Ubuntu's prebuilt NVIDIA modules working; with a third-party kernel, NVIDIA
+  would have to rebuild through DKMS on every update.
+- **`ID=ubuntu` is kept in os-release.** Ubuntu tools (`ubuntu-drivers`, PPAs,
+  Steam's runtime checks) rely on it. Only `NAME`/`PRETTY_NAME`/`VARIANT` say Goggles OS.
+- **GRUB's distributor is left as Ubuntu.** Ubuntu's signed GRUB looks in `EFI/ubuntu`.
+  Renaming it would break Secure Boot on later GRUB updates.
+- **RTX 50-series** needs NVIDIA's open kernel modules. Build with
+  `NVIDIA_BRANCH=580-open`, but note that build will **not** support GTX 10-series cards.
+- **No code is downloaded and run at build time** except Ubuntu packages, the rounded-corners
+  PPA, Flathub and Discord's official `.deb`. Other upstream tools are pinned in `third_party/`.
+- **Files are installed with root ownership and fixed permissions**, and the build fails if
+  anything in the image is owned by the build user or world-writable.
+
+## Licence
+
+The build scripts and configuration are licensed under the **GNU GPL v3.0**; see [LICENSE](LICENSE).
+
+The Goggles OS name, logos and wallpaper in `branding/source/` are **not** covered by the GPL:
+all rights reserved. Forks should use their own branding.
+
+Upstream components keep their own licences: Kubuntu/KDE (GPL/LGPL), KDE Rounded Corners (GPL-3.0),
+Tiled Menu (GPL-2.0+), papirus-folders (MIT), Papirus icons (GPL-3.0), NVIDIA driver (proprietary,
+from Ubuntu's restricted archive), Steam and Discord (proprietary, downloaded from their vendors).

@@ -1,0 +1,23 @@
+# Build outputs (ISOs, squashfs, VM disks live on the build drive, but just in case)
+*.iso
+*.iso.sha256
+*.squashfs
+*.vhdx
+*.vmdk
+output/
+work/
+
+# Local test material
+preview/
+test-shots/
+test-vm-credentials.txt
+
+# Reference copies of upstream files (KDE etc.), not ours to redistribute here
+ref/
+
+# Scratch files from scripted runs
+*.tmp.sh
+chk.out
+insp.sh
+__pycache__/
+*.pyc
