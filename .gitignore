@@ -6,6 +6,10 @@
 *.vmdk
 output/
 work/
+# Build/test folders when the repo lives in D:\GogglesOS (see config.sh CACHE_DIR/OUTPUT_DIR)
+cache/
+vm/
+vmware/
 
 # Local test material
 preview/
