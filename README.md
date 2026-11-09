@@ -1,12 +1,38 @@
-# Goggles OS
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.png">
+    <img src="docs/images/logo-light.png" alt="Goggles OS" width="480">
+  </picture>
+</p>
 
-A Linux distro for PC VR gaming, based on **Kubuntu 26.04 LTS** (Ubuntu + KDE Plasma).
+<p align="center">
+  <b>The Linux desktop built for PC VR gaming.</b><br>
+  SteamVR-ready, tuned for NVIDIA and AMD, with a frosted-glass KDE Plasma desktop.
+</p>
 
-The build remasters the official Kubuntu ISO: it unpacks the live filesystem, customizes it
-in a chroot, and writes a new ISO that keeps Kubuntu's Secure Boot chain, live session and
-Calamares installer.
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-GPL--3.0-3ddc84" alt="Licence: GPL-3.0"></a>
+  <img src="https://img.shields.io/badge/based%20on-Kubuntu%2026.04%20LTS-0f3d36" alt="Based on Kubuntu 26.04 LTS">
+  <img src="https://img.shields.io/badge/desktop-KDE%20Plasma%206.6-0f3d36" alt="KDE Plasma 6.6">
+  <img src="https://img.shields.io/badge/status-early%20development-e8c547" alt="Status: early development">
+</p>
 
-> **Status:** early development. Test in a VM before installing on real hardware.
+<p align="center">
+  <img src="docs/images/screenshot-welcome.png" alt="Goggles OS live welcome screen" width="32%">
+  <img src="docs/images/screenshot-appearance.png" alt="Installer: choose Glass or Lite" width="32%">
+  <img src="docs/images/screenshot-lockscreen.png" alt="Goggles OS lock screen" width="32%">
+  <br>
+  <sub>Live welcome screen · Glass/Lite choice in the installer · Lock screen</sub>
+</p>
+
+---
+
+Goggles OS is based on **Kubuntu 26.04 LTS** (Ubuntu + KDE Plasma). The build remasters the
+official Kubuntu ISO: it unpacks the live filesystem, customizes it in a chroot, and writes a new
+ISO that keeps Kubuntu's Secure Boot chain, live session and Calamares installer.
+
+> [!WARNING]
+> **Early development.** Test in a VM before installing on real hardware.
 > See [ROADMAP.md](ROADMAP.md) for what's planned (VR home shell, Quest streaming, Rift CV1).
 
 ## What's inside
@@ -84,6 +110,7 @@ third_party/                  pinned, checksum-verified copies of upstream tools
 test-iso.sh                   QEMU boot test with screenshots (headless, window or browser view)
 vmware-test-vm.ps1            VMware test VM
 hyperv-*.ps1                  Hyper-V test VM and helpers
+docs/images/                  README logos and screenshots
 ```
 
 ## Design notes
@@ -107,8 +134,8 @@ hyperv-*.ps1                  Hyper-V test VM and helpers
 
 The build scripts and configuration are licensed under the **GNU GPL v3.0**; see [LICENSE](LICENSE).
 
-The Goggles OS name, logos and wallpaper in `branding/source/` are **not** covered by the GPL:
-all rights reserved. Forks should use their own branding.
+The Goggles OS name, logos and wallpaper (`branding/source/` and the logos in `docs/images/`) are
+**not** covered by the GPL: all rights reserved. Forks should use their own branding.
 
 Upstream components keep their own licences: Kubuntu/KDE (GPL/LGPL), KDE Rounded Corners (GPL-3.0),
 Tiled Menu (GPL-2.0+), papirus-folders (MIT), Papirus icons (GPL-3.0), NVIDIA driver (proprietary,
