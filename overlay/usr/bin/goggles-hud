@@ -1,0 +1,32 @@
+#!/bin/bash
+# Goggles HUD: the CPU / RAM / GPU / network widget on the desktop, for the current user.
+#   goggles-hud add      put it on the desktop (top right) if it isn't there
+#   goggles-hud remove   take it off
+#   goggles-hud          ask with a dialog
+# You can also add, move and resize it like any widget (right-click the desktop > Enter Edit Mode).
+set -u
+ACTION="${1:-}"
+if [ -z "$ACTION" ]; then
+  ACTION=$(kdialog --title "Goggles HUD" --radiolist "System stats widget on the desktop:" \
+    add "Show it" on remove "Remove it" off) || exit 0
+fi
+case "$ACTION" in
+  add)
+    SCRIPT="var d = desktops()[0];
+      var found = false;
+      d.widgetIds.forEach(function (id) { if (d.widgetById(id).type === 'org.gogglesos.hud') { found = true; } });
+      if (!found) {
+        var g = screenGeometry(d.screen), w = gridUnit * 38, h = gridUnit * 13;
+        d.addWidget('org.gogglesos.hud', Math.max(0, g.width - w - gridUnit * 2), gridUnit * 2, w, h);
+      }" ;;
+  remove)
+    SCRIPT="desktops().forEach(function (d) {
+        d.widgetIds.forEach(function (id) { var w = d.widgetById(id); if (w.type === 'org.gogglesos.hud') { w.remove(); } });
+      });" ;;
+  *) echo "usage: goggles-hud add|remove" >&2; exit 2 ;;
+esac
+if ! qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$SCRIPT" >/dev/null; then
+  echo "goggles-hud: couldn't reach the desktop (run this from your Plasma session)" >&2
+  exit 1
+fi
+echo "Goggles HUD: $ACTION"

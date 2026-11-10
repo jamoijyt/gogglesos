@@ -9,6 +9,11 @@ This follows the layout of Breeze's widgets/panel-background.svgz, with:
   - a faint light rim on the other edges
 
   visor-panel.py OPACITY > panel-background.svg      (OPACITY 0..1 of the glass fill)
+  visor-panel.py OPACITY dialog > background.svg     popups: same glass, smaller corners,
+                                                     a quieter accent line
+
+Popups (dialogs/background.svgz) use the same tile names and margins as the panel in Breeze,
+so one drawing routine serves both.
 
 Colours come from the theme at run time through the ColorScheme-* classes.
 """
@@ -19,6 +24,8 @@ C = 32          # length of the stretchable part of each tile
 S = 10          # shadow width
 RIM = 0.10      # opacity of the light rim on the sides and bottom
 GLOW = 6        # height of the glow under the accent line
+GLOW_A = 0.38   # opacity of that glow at the top
+LINE_A = 0.95   # opacity of the accent line
 
 
 def main(opacity):
@@ -39,11 +46,11 @@ def main(opacity):
       .ColorScheme-Highlight {{ color:#3ddc84; stop-color:#3ddc84; }}
     </style>
     <linearGradient id="glow" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" class="ColorScheme-Highlight" style="stop-color:currentColor;stop-opacity:0.38"/>
+      <stop offset="0" class="ColorScheme-Highlight" style="stop-color:currentColor;stop-opacity:{GLOW_A}"/>
       <stop offset="1" class="ColorScheme-Highlight" style="stop-color:currentColor;stop-opacity:0"/>
     </linearGradient>
     <linearGradient id="arc" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" class="ColorScheme-Highlight" style="stop-color:currentColor;stop-opacity:0.95"/>
+      <stop offset="0" class="ColorScheme-Highlight" style="stop-color:currentColor;stop-opacity:{LINE_A}"/>
       <stop offset="0.75" class="ColorScheme-Highlight" style="stop-color:currentColor;stop-opacity:0"/>
     </linearGradient>
     <linearGradient id="side">
@@ -90,7 +97,7 @@ def main(opacity):
     w(f'''  <g id="top" transform="translate({xs[1]},{ys[0]})">
     <rect width="{C}" height="{R}" {bg}/>
     <rect width="{C}" height="{GLOW}" fill="url(#glow)"/>
-    <rect width="{C}" height="1" {acc} opacity="0.95"/>
+    <rect width="{C}" height="1" {acc} opacity="{LINE_A}"/>
   </g>
   <g id="bottom" transform="translate({xs[1]},{ys[2]})">
     <rect width="{C}" height="{R}" {bg}/>
@@ -202,6 +209,11 @@ if __name__ == "__main__":
         value = float(sys.argv[1])
         if not 0 < value <= 1:
             raise ValueError
+        style = sys.argv[2] if len(sys.argv) > 2 else "panel"
+        if style not in ("panel", "dialog"):
+            raise ValueError
     except (IndexError, ValueError):
-        sys.exit("usage: visor-panel.py OPACITY   (0 < OPACITY <= 1)")
+        sys.exit("usage: visor-panel.py OPACITY [panel|dialog]   (0 < OPACITY <= 1)")
+    if style == "dialog":
+        R, GLOW, GLOW_A, LINE_A, RIM = 12, 4, 0.2, 0.7, 0.13
     main(value)

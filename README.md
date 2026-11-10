@@ -51,8 +51,8 @@ ISO that keeps Kubuntu's Secure Boot chain, live session and Calamares installer
 | Kernel | Stock Ubuntu kernel with `preempt=full threadirqs` (full preemption), plus SteamOS-style sysctls (`max_map_count`, no split-lock penalty, low swappiness) |
 | Gaming | GameMode, MangoHud, GOverlay, Protontricks, ProtonUp-Qt (Flatpak, for Proton-GE), Flathub enabled |
 | Apps | OBS Studio, Discord |
-| Look | **Glass** (default) or **Lite** mode, chosen in the installer and switchable with *Goggles Appearance*; **Visor** taskbar (a centred, rounded glass bar with a glowing green top edge; *Goggles Taskbar* switches it to full width); frosted-glass popups; Windows 10-style start menu (Tiled Menu); Goggles Dark colours; rounded corners; Papirus-Dark icons with green folders; green lock screen |
-| Branding | os-release, wallpaper, boot splash, live welcome screen, login, installer and slideshow, About-this-System |
+| Look | **Glass** (default) or **Lite** mode, chosen in the installer and switchable with *Goggles Appearance*; **Visor** taskbar (a centred, rounded glass bar with a glowing green top edge; *Goggles Taskbar* switches it to full width); frosted-glass popups with a light rim and visor line; **Goggles HUD** desktop widget (CPU, RAM, GPU, network); Windows 10-style start menu (Tiled Menu); Goggles Dark colours; rounded corners; Papirus-Dark icons with green folders; green lock screen |
+| Branding | os-release, wallpaper, boot splash, startup splash (lenses that light up), live welcome screen, Goggles login screen, installer and slideshow, About-this-System |
 | VMs | VMware guest tools (screen resize, clipboard) |
 | Updates | **Goggles Update**: installed systems get new Goggles OS changes from GitHub without a new ISO |
 
@@ -146,7 +146,10 @@ config.sh                     name, versions, package lists, GPU variant
 build.sh                      unpack ISO -> chroot customize -> repack ISO
 chroot/customize.sh           runs inside the live filesystem (packages, drivers, installer)
 chroot/apply-system.sh        system configuration shared by the build and Goggles Update
-chroot/visor-panel.py         draws the Visor taskbar background for the Plasma theme
+chroot/visor-panel.py         draws the Visor taskbar and popup backgrounds for the Plasma theme
+chroot/splash/                startup splash (QML)
+chroot/sddm-theme/            login screen (SDDM theme, QML)
+chroot/hud-plasmoid/          Goggles HUD desktop widget (Plasma widget, QML)
 chroot/calamares/             installer pages (Appearance: Glass / Lite)
 chroot/calamares-show.qml     installer slideshow
 chroot/tiledmenu-tiles.json   default start-menu tiles
@@ -156,6 +159,7 @@ branding/build-installer-prompt.sh   rebuilds the live "Try or Install" screen w
 overlay/                      files installed into the system (/etc, /usr)
   usr/bin/goggles-theme       Glass / Lite switcher
   usr/bin/goggles-panel       taskbar layout switcher (Visor / wide)
+  usr/bin/goggles-hud         show or remove the Goggles HUD widget
   usr/bin/goggles-update      Goggles Update (plus its daily check in usr/lib/systemd/user/)
   usr/local/bin/goggles-vr-setup   SteamVR setup helper
   usr/libexec/gogglesos/      lock-screen patch + re-apply hook run after package updates

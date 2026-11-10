@@ -1,0 +1,15 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [ { "Name": "Goggles OS" } ],
+        "Category": "System Information",
+        "Description": "CPU, memory, GPU and network readouts in the Goggles visor style",
+        "Icon": "utilities-system-monitor",
+        "Id": "org.gogglesos.hud",
+        "License": "GPL-3.0-or-later",
+        "Name": "Goggles HUD",
+        "Version": "1.0",
+        "Website": "https://github.com/jamoijyt/gogglesos"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}
