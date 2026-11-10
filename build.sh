@@ -82,7 +82,7 @@ if [ "${REUSE_ROOTFS:-0}" != 1 ]; then
   rm -rf "$G"; mkdir -p "$G"
   # Copy WITHOUT preserving modes/owners: files on a Windows drive show up as 0777 and
   # owned by the WSL user, which must never leak into the image.
-  cp -r --no-preserve=mode,ownership "$HERE/config.sh" "$HERE/chroot" "$HERE/overlay" "$HERE/third_party" "$G/"
+  cp -r --no-preserve=mode,ownership "$HERE/config.sh" "$HERE/chroot" "$HERE/overlay" "$HERE/third_party" "$HERE/gogglesxr" "$G/"
   chown -R root:root "$G"
   find "$G" -type d -exec chmod 755 {} +
   find "$G" -type f -exec chmod 644 {} +

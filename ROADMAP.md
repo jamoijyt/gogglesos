@@ -124,9 +124,12 @@ Pressing the dashboard button brings up one glass panel in front of you, with a 
 
 1. ✅ **Proof on the test PC.** Done on 10 November 2026: WiVRn (Monado) streamed a VR game to a Quest on the GTX 1080 with head tracking and a stable frame rate, with no sign of the crash that hits Steam Link. See "What the proof showed" below.
 2. ✅ **SteamVR games through translation.** Grab VR and Gorilla Tag both ran from Steam on the test PC with working controllers and buttons.
-3. 🔨 **Seamless setup (GogglesXR v0).** The `gogglesxr` tool does automatically what took manual troubleshooting in the proof: it keeps the translator first for SteamVR games, lets Steam's game containers see the runtime for the whole session (no launch options), repairs itself when SteamVR changes the file, and reports each link of the chain in plain words. This version uses **WiVRn as its engine**, preinstalled with Goggles OS. Needs testing on the test PC.
+3. ✅ **Seamless setup (GogglesXR v0).** Tested on the test PC on 10 November 2026: games reach the headset with no launch options.
+    The `gogglesxr` tool does automatically what took manual troubleshooting in the proof: it keeps the translator first for SteamVR games, lets Steam's game containers see the runtime for the whole session (no launch options), repairs itself when SteamVR changes the file, and reports each link of the chain in plain words. This version uses **WiVRn as its engine**, preinstalled with Goggles OS.
 4. **GogglesXR's own runtime build.** A Monado-based runtime packaged for Goggles OS under its own name, replacing the WiVRn Flatpak, with its own headset app.
-5. **Dashboard v1.** The five-panel overlay in the headset: panel swiping, laser input, status strip, Current Game and Quick Settings working for real. Desktop, Library and Full Settings follow.
+5. 🔨 **Dashboard v1.** Built in Godot (`gogglesxr/dashboard`, run with `gogglesxr dashboard`), in two stages:
+   - **5a, as a normal VR app (in progress).** The five panels on a floating screen, lasers, trigger to click, stick to scroll, grip + swipe between panels, status strip. Working for real: Library (reads the installed Steam games and launches them), volume, recentre, dashboard distance and size. It runs when no game is running. Needs its first test in the headset.
+   - **5b, on top of a running game.** Needs the OpenXR overlay extension (`XR_EXTX_overlay`). Monado supports it; Godot does not yet (the only pull request, godotengine/godot#87522, is unfinished). Plan: a small native Godot extension that requests an overlay session, plus input hand-over from the runtime. Current Game, Desktop and the remaining settings come with this stage.
 6. **Wi-Fi streaming** with pairing and automatic reconnect; the PC app with *Install to headset*.
 7. **Per-headset profiles, adaptive bitrate.**
 8. **Goggles Home.**
@@ -205,11 +208,11 @@ A CV1 is available for testing.
 | ALVR / WiVRn | From my own experience only: ALVR works for me on Windows but I find it clunky and hard to set up, and I've never got it working on Linux. WiVRn has broken itself for me during install or after small changes. For me the problem is the software and experience, not the network. Streaming becomes part of **GogglesXR**, Goggles OS's own runtime |
 | VR runtime | Goggles OS has its own OpenXR runtime, **GogglesXR**, built on Monado. It must run SteamVR games (OpenVR-to-OpenXR translation, as WiVRn does) |
 | Dashboard | Five panels on a plus-shaped layout (Current Game in the centre; Quick Settings above, Desktop below, Library right, Full Settings left), moved by grip + swipe. Dashboard first, Goggles Home later |
-| Goggles Home engine | Godot 4 |
+| Dashboard and Goggles Home engine | Godot 4. Ubuntu packages only Godot 3, so `gogglesxr dashboard` fetches the official Godot 4 build once (checksum pinned) until the dashboard ships as a built app |
 | Wi-Fi | TP-Link RE200 (AC750) extender on 5 GHz in the play room, PC wired to it by Ethernet. Works fine for VR streaming, including ALVR on Windows |
 | Steam Frame | Streams with Steam Link over the same local Wi-Fi. The wireless adapter works but its Linux setup is unreliable, so it's optional |
 
 ## Open questions
 
 1. Can a third-party streaming client be installed on the Steam Frame?
-2. What draws the dashboard: a Godot app shown as an overlay layer, or a 2D UI rendered to a texture by the runtime? To decide at the dashboard milestone.
+2. For the dashboard to show over a game: how does the runtime hand controller input to an overlay app while a game has focus? WayVR (wlx-overlay-s) does this on Monado and is the reference.

@@ -15,14 +15,19 @@ does the setup that otherwise has to be done by hand:
   gogglesxr status    check the whole chain; exit 0 if games will reach the headset
   gogglesxr fix       repair the OpenVR paths file if GogglesXR is on (used by the watcher)
   gogglesxr start     open the runtime's window to connect a headset
+  gogglesxr dashboard open the GogglesXR dashboard (in the headset if one is connected,
+                      otherwise in a preview window)
   gogglesxr           ask with a dialog (menu entry)
 """
 import glob
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
+import urllib.request
+import zipfile
 
 ENGINE_APP = "io.github.wivrn.wivrn"
 HOME = os.path.expanduser("~")
@@ -36,6 +41,14 @@ IPC_SOCKET = os.path.join(RUNTIME_DIR, "wivrn", "comp_ipc")
 FLATPAK_ROOTS = ["/var/lib/flatpak", os.path.join(HOME, ".local/share/flatpak")]
 WATCHER = "gogglesxr-guard.path"
 TITLE = "GogglesXR"
+# The dashboard is a Godot 4 project. Ubuntu only packages Godot 3, so the official Godot 4
+# build is fetched once (checksum pinned here) unless a Godot 4 is already installed.
+DASHBOARD_SRC = "/usr/share/gogglesos/gogglesxr-dashboard"
+DATA = os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local/share"), "gogglesxr")
+GODOT_VERSION = "4.4.1-stable"
+GODOT_BIN = f"Godot_v{GODOT_VERSION}_linux.x86_64"
+GODOT_URL = f"https://github.com/godotengine/godot/releases/download/{GODOT_VERSION}/{GODOT_BIN}.zip"
+GODOT_SHA256 = "d6e382fb531019f85630c1f485a561a0d20c4a2344b6c3847735cfee7da812aa"
 ENV_VARS = ("PRESSURE_VESSEL_IMPORT_OPENXR_1_RUNTIMES", "PRESSURE_VESSEL_FILESYSTEMS_RW")
 
 
@@ -283,6 +296,68 @@ def start():
     return 0
 
 
+def find_godot():
+    """A Godot 4 to run the dashboard with: an installed one, or the copy fetched earlier."""
+    for name in ("godot4", "godot"):
+        path = shutil.which(name)
+        if not path:
+            continue
+        try:
+            out = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=20).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if out.strip().startswith("4."):
+            return path
+    local = os.path.join(DATA, GODOT_BIN)
+    return local if os.access(local, os.X_OK) else None
+
+
+def fetch_godot():
+    os.makedirs(DATA, exist_ok=True)
+    archive = os.path.join(DATA, "godot.zip")
+    print(f"Fetching Godot {GODOT_VERSION} (about 60 MB, once)…")
+    try:
+        with urllib.request.urlopen(GODOT_URL, timeout=120) as r, open(archive, "wb") as f:
+            shutil.copyfileobj(r, f)
+    except OSError as e:
+        print(f"gogglesxr: couldn't download Godot ({e}). Check your internet connection.", file=sys.stderr)
+        return None
+    digest = hashlib.sha256()
+    with open(archive, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    if digest.hexdigest() != GODOT_SHA256:
+        os.remove(archive)
+        print("gogglesxr: the Godot download doesn't match the expected file; not using it.", file=sys.stderr)
+        return None
+    with zipfile.ZipFile(archive) as z:
+        z.extract(GODOT_BIN, DATA)
+    os.remove(archive)
+    path = os.path.join(DATA, GODOT_BIN)
+    os.chmod(path, 0o755)
+    return path
+
+
+def dashboard(extra=()):
+    src = os.environ.get("GOGGLESXR_DASHBOARD_SRC") or DASHBOARD_SRC
+    if not os.path.isfile(os.path.join(src, "project.godot")):
+        print(f"gogglesxr: the dashboard isn't installed ({src}). Run: sudo goggles-update", file=sys.stderr)
+        return 1
+    # Godot keeps a cache next to the project, so run from a copy the user owns
+    project = os.path.join(DATA, "dashboard")
+    os.makedirs(project, exist_ok=True)
+    for name in os.listdir(src):
+        if name.endswith((".gd", ".tscn", ".godot")) and os.path.isfile(os.path.join(src, name)):
+            shutil.copy2(os.path.join(src, name), os.path.join(project, name))
+    godot = find_godot() or fetch_godot()
+    if not godot:
+        return 1
+    if not os.path.exists(IPC_SOCKET):
+        print("No headset connected, so the dashboard opens in a preview window.\n"
+              "For the headset: gogglesxr start, connect the Quest, then run this again.")
+    return subprocess.run([godot, "--path", project, *extra]).returncode
+
+
 def gui():
     if not shutil.which("kdialog"):
         return status()
@@ -290,13 +365,14 @@ def gui():
     choice = subprocess.run(
         ["kdialog", "--title", TITLE, "--menu", text.replace("\n", "<br>").replace(" ", "&nbsp;"),
          "start", "Open the runtime and connect a headset",
+         "dashboard", "Open the dashboard",
          "on", "Set up / repair GogglesXR",
          "off", "Switch off (use SteamVR, for wired headsets)"],
         capture_output=True, text=True)
     if choice.returncode != 0:
         return 0
-    rc = {"start": start, "on": turn_on, "off": turn_off}[choice.stdout.strip()]()
-    if choice.stdout.strip() != "start":
+    rc = {"start": start, "on": turn_on, "off": turn_off, "dashboard": dashboard}[choice.stdout.strip()]()
+    if choice.stdout.strip() in ("on", "off"):
         text, _ = status_text()
         subprocess.run(["kdialog", "--title", TITLE, "--msgbox", text])
     return rc
@@ -310,7 +386,8 @@ def status():
 
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "--gui"
-    actions = {"on": turn_on, "off": turn_off, "status": status, "fix": fix, "start": start, "--gui": gui}
+    actions = {"on": turn_on, "off": turn_off, "status": status, "fix": fix, "start": start, "--gui": gui,
+               "dashboard": lambda: dashboard(sys.argv[2:])}
     if cmd not in actions:
         print(__doc__.strip(), file=sys.stderr)
         return 2

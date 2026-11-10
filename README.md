@@ -146,6 +146,7 @@ config.sh                     name, versions, package lists, GPU variant
 build.sh                      unpack ISO -> chroot customize -> repack ISO
 chroot/customize.sh           runs inside the live filesystem (packages, drivers, installer)
 chroot/apply-system.sh        system configuration shared by the build and Goggles Update
+gogglesxr/dashboard/          GogglesXR dashboard (Godot 4 project): five panels, lasers, grip + swipe
 chroot/visor-panel.py         draws the Visor taskbar and popup backgrounds for the Plasma theme
 chroot/splash/                startup splash (QML)
 chroot/sddm-theme/            login screen (SDDM theme, QML)
