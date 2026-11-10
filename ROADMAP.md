@@ -122,13 +122,25 @@ Pressing the dashboard button brings up one glass panel in front of you, with a 
 
 ### Milestones
 
-1. **Proof on the test PC.** Run Monado (through WiVRn's server) with a Quest on the GTX 1080 and confirm that a runtime outside SteamVR streams without the crash that hits Steam Link. If the NVIDIA driver fails here too, the plan needs rethinking before anything is built.
-2. **SteamVR game through translation.** One OpenVR game and one Proton game running on that setup, with the registration and container steps written down.
+1. ✅ **Proof on the test PC.** Done on 10 November 2026: WiVRn (Monado) streamed a VR game to a Quest on the GTX 1080 with head tracking and a stable frame rate, with no sign of the crash that hits Steam Link. See "What the proof showed" below.
+2. 🔨 **SteamVR game through translation.** The translation layer (xrizer) loads under Proton and opens a session on the test PC. Still to do: confirm controllers and input with a game whose controls work, and test one well-known SteamVR title.
 3. **GogglesXR skeleton.** A Monado-based runtime packaged for Goggles OS, registered automatically, with USB streaming to a bare-bones headset app.
 4. **Dashboard v1.** The five-panel overlay in the headset: panel swiping, laser input, status strip, Current Game and Quick Settings working for real. Desktop, Library and Full Settings follow.
 5. **Wi-Fi streaming** with pairing and automatic reconnect; the PC app with *Install to headset*.
 6. **Per-headset profiles, adaptive bitrate, self-check and repair.**
 7. **Goggles Home.**
+
+### What the proof showed
+
+Test on 10 November 2026: GTX 1080, NVIDIA 580.178.04, Quest connected through WiVRn (Flatpak) with the regular `.deb` Steam.
+
+- **Result:** a VR game (Tricky Taggers, a non-Steam game added to Steam) ran in the headset with full head tracking and a stable frame rate. Controllers were not tested, because that build of the game has broken controller support.
+- **It took three manual steps**, which GogglesXR must do automatically:
+  1. **Put the translation layer first in the OpenVR paths file** (`~/.config/openvr/openvrpaths.vrpath`). SteamVR was listed first, so games went to SteamVR.
+  2. **Add launch options to every game** so Steam's game container can see the runtime: `PRESSURE_VESSEL_IMPORT_OPENXR_1_RUNTIMES=1` and `PRESSURE_VESSEL_FILESYSTEMS_RW=<runtime path>`.
+  3. **Keep SteamVR from running**, since it can put itself back on top of that file.
+- **Not every game can work.** Games that only ship the Oculus interface (`OVRPlugin.dll` and nothing else) never ask for VR through SteamVR or OpenXR, so they stay flat on any Linux runtime. The Library panel should mark these.
+- **Desktop Chrome is not a test.** WebXR found no headset in Chrome on Linux even with the runtime working.
 
 ### Network baseline
 
@@ -198,6 +210,6 @@ A CV1 is available for testing.
 
 ## Open questions
 
-1. Does a runtime outside SteamVR (Monado through WiVRn) stream to the Quest on the GTX 1080 without the Steam Link crash? This is GogglesXR milestone 1.
+1. Do controllers and input work through the translation layer on the test PC? (Head tracking and video are confirmed.)
 2. Can a third-party streaming client be installed on the Steam Frame?
 3. What draws the dashboard: a Godot app shown as an overlay layer, or a 2D UI rendered to a texture by the runtime? To decide at dashboard milestone 4.
