@@ -642,7 +642,7 @@ sudo apt install xorriso squashfs-tools imagemagick webp</pre></div>
   <section data-tab="roadmap">
     <p class="eyebrow">Roadmap</p>
     <h1>Where Goggles OS is heading</h1>
-    <p class="lead">Seven phases, from a bootable distro to its own VR home and Quest streaming. Pick a phase on the timeline, or use the arrow keys. Full details live in <a href="https://github.com/jamoijyt/gogglesos/blob/main/ROADMAP.md">ROADMAP.md</a>.</p>
+    <p class="lead">Seven phases, from a bootable distro to its own VR runtime, dashboard and Quest streaming. Pick a phase on the timeline, or use the arrow keys. Full details live in <a href="https://github.com/jamoijyt/gogglesos/blob/main/ROADMAP.md">ROADMAP.md</a>.</p>
 
     <div class="glass tl-wrap">
       <div class="tl" id="tl" role="tablist" aria-label="Roadmap phases"><span class="tl-fill" id="tl-fill"></span></div>
@@ -759,18 +759,18 @@ sudo apt install xorriso squashfs-tools imagemagick webp</pre></div>
       note: "Still needs a full test pass on Goggles OS.", phase: 1 },
     { name: "Steam Frame", tag: "Frame", status: "research", label: "Needs verifying",
       how: "Streams with Valve's Steam Link over your normal Wi-Fi. The Steam Frame wireless adapter is optional; its Linux setup is still unreliable.",
-      note: "To check: Steam Link streaming works out of the box on Goggles OS.", phase: 1 },
+      note: "Known problem: Steam Link VR currently crashes on GTX 10-series cards with the NVIDIA 580 driver. This is a SteamVR bug with no fix yet.", phase: 2 },
     { name: "Meta Quest 3", tag: "Q3", status: "plan", label: "Planned",
-      how: "Will stream from SteamVR with Goggles Link, over Wi-Fi or a USB cable.",
-      note: "Goggles Link is phase 3 of the roadmap.", phase: 3 },
+      how: "Will stream through GogglesXR, Goggles OS's own VR runtime, over Wi-Fi or a USB cable.",
+      note: "GogglesXR is phase 2 of the roadmap.", phase: 2 },
     { name: "Meta Quest 2", tag: "Q2", status: "plan", label: "Planned",
-      how: "Will stream from SteamVR with Goggles Link, over Wi-Fi or a USB cable.",
-      note: "Goggles Link is phase 3 of the roadmap.", phase: 3 },
+      how: "Will stream through GogglesXR, Goggles OS's own VR runtime, over Wi-Fi or a USB cable.",
+      note: "GogglesXR is phase 2 of the roadmap.", phase: 2 },
     { name: "Oculus Quest 1", tag: "Q1", status: "plan", label: "Planned",
-      how: "Will stream with Goggles Link using a lower-resolution profile.",
-      note: "Meta has ended Quest 1 updates, so the headset app has to stay on tools that still run on it.", phase: 3 },
+      how: "Will stream through GogglesXR using a lower-resolution profile.",
+      note: "Meta has ended Quest 1 updates, so the headset app has to stay on tools that still run on it.", phase: 2 },
     { name: "Oculus Rift CV1", tag: "CV1", status: "research", label: "Planned · needs research",
-      how: "Through the community Monado driver and its SteamVR plugin. Rotation tracking is the dependable part today.",
+      how: "Through the community Monado driver, which GogglesXR is built on. Rotation tracking is the dependable part today.",
       note: "Full position tracking and Touch controllers depend on community work whose maturity still needs checking.", phase: 4 },
   ];
   const hsPills = $("#hs-pills"), hsPanel = $("#hs-panel");
@@ -917,44 +917,43 @@ sudo apt install xorriso squashfs-tools imagemagick webp</pre></div>
         ["wip", "Remove Kubuntu desktop links", ""],
         ["limited", "SteamVR preinstalled", "Not possible on the ISO: SteamVR only comes through Steam and needs a login. An Install SteamVR app opens Steam's installer instead"],
       ] },
-    { title: "Goggles Home", status: "plan",
-      goal: "A Goggles home space you land in when the headset starts. Launching a game hands over to it; quitting the game brings you back.",
+    { title: "GogglesXR", status: "plan", long: "GogglesXR: Goggles OS's own VR runtime", link: ["dashboard/", "Try the dashboard prototype"],
+      goal: "An OpenXR runtime for Goggles OS that streams to Quest headsets, runs SteamVR games, and has its own dashboard. It doesn't go through SteamVR's compositor. It's the biggest item on the roadmap.",
       notes: [
-        "Built with Godot 4, which has native Linux OpenXR support",
-        "Reads your installed games straight from the local Steam library; no API key needed",
-        "Sits alongside SteamVR's own system dashboard, which can't be removed",
-      ],
-      miles: [
-        "An OpenXR “hello room” running under SteamVR on Goggles OS",
-        "Game grid from the local Steam library, plus launching",
-        "Return to home after a game exits",
-        "Overlay menu: volume, Wi-Fi, recentre, quit to desktop",
-        "Environments and themes that match Glass and Lite",
-      ] },
-    { title: "Goggles Link", status: "plan",
-      goal: "The simplest way to play PC VR on Linux: stream SteamVR to Quest 1, 2 and 3 over Wi-Fi or USB. A new app built for Goggles OS. It's the biggest item on the roadmap.",
-      notes: [
+        "Built on Monado, the open-source OpenXR runtime",
+        "SteamVR games run through an OpenVR-to-OpenXR translation layer, as they do with WiVRn",
+        "Streaming to Quest 1, 2 and 3 over Wi-Fi or USB, with the headset app installed from the PC",
+        "Five-panel dashboard: Current Game in the centre, Quick Settings above, Desktop below, Library right, Settings left",
+        "Hold grip and swipe the panel like a card to move between them",
         "Preinstalled, with nothing to set up on the PC",
-        "Install the headset app from the PC: plug the Quest in once",
-        "Pair once, then the headset connects on its own",
-        "One simple screen with a single quality setting",
-        "Checks and repairs its own setup; PC and headset apps update together",
-        "Errors in plain words, and USB mode as a fallback",
       ],
       miles: [
-        "USB mode: video and tracking over the cable on Quest 2 and 3",
-        "Wi-Fi streaming with pairing and automatic reconnect",
-        "The PC app: Install to headset, status screen, quality setting",
-        "Self-check and repair",
-        "Adaptive bitrate and per-headset profiles, including Quest 1",
-        "Hand off to Goggles Home",
+        "Proof on the test PC: a runtime outside SteamVR streaming to a Quest on a GTX 1080",
+        "A SteamVR game running through the translation layer",
+        "GogglesXR skeleton with USB streaming",
+        "Dashboard v1 in the headset",
+        "Wi-Fi streaming with pairing, and the PC app",
+        "Per-headset profiles, adaptive bitrate, self-repair",
+      ] },
+    { title: "Goggles Home", status: "plan",
+      goal: "A Goggles home space you land in when the headset connects and no game is running. Launching a game hands over to it; quitting brings you back.",
+      notes: [
+        "An OpenXR app running on GogglesXR, built with Godot 4",
+        "Reads your installed games straight from the local Steam library; no API key needed",
+        "Shares its library with the dashboard",
+      ],
+      miles: [
+        "An OpenXR “hello room” running on GogglesXR",
+        "Game grid and launching",
+        "Return to home after a game exits",
+        "Environments and themes that match Glass and Lite",
       ] },
     { title: "Rift CV1", status: "research", long: "Legacy headsets: Oculus Rift CV1",
       goal: "Meta's Rift software is Windows-only and discontinued, so Linux support comes from community drivers. Feasibility: partly.",
       items: [
         ["plan", "Display and rotation tracking", "OpenHMD / Monado drive the CV1 display and motion sensor. Rotation-only tracking is the dependable part"],
         ["research", "Full position tracking + Touch controllers", "Relies on community reverse-engineering work; its maturity needs checking before committing"],
-        ["plan", "Route into SteamVR", "Monado's SteamVR plugin, so the CV1 uses the same path as every other headset"],
+        ["plan", "Route into games", "GogglesXR is built on Monado, so the CV1 would use the same runtime and dashboard as every other headset"],
       ] },
     { title: "Everyday apps", status: "plan",
       goal: "Apps that aren't on Linux yet, added the right way: launchers and installers that fetch from the official source, never closed binaries in the ISO.",
@@ -967,7 +966,7 @@ sudo apt install xorriso squashfs-tools imagemagick webp</pre></div>
       items: [
         ["done", "Website and download page", "This site, on GitHub Pages"],
         ["wip", "Goggles Update", "Installed systems get Goggles OS changes from GitHub without a new ISO, with a daily check and rollback"],
-        ["plan", "Goggles tools as packages", "Home and Link as packages in a Goggles PPA once they're larger apps"],
+        ["plan", "Goggles tools as packages", "GogglesXR and Home as packages in a Goggles PPA once they're larger apps"],
         ["plan", "Separate ISOs", "nvidia (GTX 900 to RTX 40), nvidia-open (RTX 50) and amd (smaller)"],
         ["plan", "Automated builds", "GitHub Actions or a build box, plus a Hyper-V smoke test"],
       ] },
@@ -1001,7 +1000,7 @@ sudo apt install xorriso squashfs-tools imagemagick webp</pre></div>
     tlPanel.setAttribute("aria-labelledby", "tl-" + i);
     tlPanel.innerHTML = `<p class="eyebrow">Phase ${i}${p.tag ? " · " + esc(p.tag) : ""}</p>
       <div class="tl-head"><h2>${esc(p.long || p.title)}</h2>${badge(p.status)}</div>
-      <p class="tl-goal">${esc(p.goal)}</p>${items}${cols}
+      <p class="tl-goal">${esc(p.goal)}</p>${p.link ? `<p><a class="btn small" href="${esc(p.link[0])}">${esc(p.link[1])} →</a></p>` : ""}${items}${cols}
       <div class="tl-nav">
         <button class="btn small" type="button" data-go="${i - 1}" ${i === 0 ? "disabled style='visibility:hidden'" : ""}>← ${i ? esc(PHASES[i - 1].title) : ""}</button>
         <span class="count">${i + 1} / ${PHASES.length}</span>
