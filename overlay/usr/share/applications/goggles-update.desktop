@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Goggles Update
+Comment=Get the latest Goggles OS changes without a new ISO
+Exec=goggles-update --gui
+Icon=system-software-update
+Categories=System;Settings;
+Keywords=update;upgrade;goggles;

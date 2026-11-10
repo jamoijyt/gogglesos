@@ -89,12 +89,21 @@ if [ "${REUSE_ROOTFS:-0}" != 1 ]; then
   find "$G" -type f \( -name '*.sh' -o -name '*.conf' -o -name '*.qml' -o -path '*/overlay/*' \) -exec sed -i 's/\r$//' {} +
   bash "$HERE/branding/make-assets.sh" "$G/assets"
 
-  log "Customizing in chroot (GPU_VARIANT=$GPU_VARIANT)"
+  # Commit the image is built from, so Goggles Update knows what the installed system has.
+  # "-dirty" marks uncommitted changes (the next update then re-applies everything).
+  SOURCE_COMMIT=unknown
+  if command -v git >/dev/null && SOURCE_COMMIT=$(git -c safe.directory="$HERE" -C "$HERE" rev-parse HEAD 2>/dev/null); then
+    [ -z "$(git -c safe.directory="$HERE" -C "$HERE" status --porcelain 2>/dev/null)" ] || SOURCE_COMMIT="$SOURCE_COMMIT-dirty"
+  else
+    SOURCE_COMMIT=unknown
+  fi
+
+  log "Customizing in chroot (GPU_VARIANT=$GPU_VARIANT, source $SOURCE_COMMIT)"
   cp -L /etc/resolv.conf "$ROOTFS/tmp/goggles/resolv.conf"
   mount_chroot
   chroot "$ROOTFS" /usr/bin/env -i HOME=/root TERM="${TERM:-xterm}" LANG=C.UTF-8 \
     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-    GPU_VARIANT="$GPU_VARIANT" NVIDIA_BRANCH="$NVIDIA_BRANCH" \
+    GPU_VARIANT="$GPU_VARIANT" NVIDIA_BRANCH="$NVIDIA_BRANCH" SOURCE_COMMIT="$SOURCE_COMMIT" \
     bash /tmp/goggles/chroot/customize.sh
   cleanup
   rm -rf "$ROOTFS/tmp/goggles"

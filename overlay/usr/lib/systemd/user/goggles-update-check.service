@@ -1,0 +1,9 @@
+[Unit]
+Description=Check for Goggles OS updates
+Documentation=https://github.com/jamoijyt/gogglesos#updating
+After=graphical-session.target
+ConditionPathExists=/usr/bin/goggles-update
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/goggles-update --notify
