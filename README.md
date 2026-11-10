@@ -46,7 +46,7 @@ ISO that keeps Kubuntu's Secure Boot chain, live session and Calamares installer
 
 | Area | What Goggles OS adds |
 |---|---|
-| VR | Steam, `steam-devices` udev rules (Index, Vive, Quest, controllers), **Goggles VR Setup** (grants SteamVR's compositor `CAP_SYS_NICE` for async reprojection), **Install SteamVR** helper |
+| VR | **GogglesXR** setup for streaming to standalone headsets (`gogglesxr on`: SteamVR games reach the headset with no launch options), Steam, `steam-devices` udev rules (Index, Vive, Quest, controllers), **Goggles VR Setup** (grants SteamVR's compositor `CAP_SYS_NICE` for async reprojection), **Install SteamVR** helper |
 | GPU | Mesa + Vulkan for AMD/Intel (64- and 32-bit). The `nvidia` variant also includes NVIDIA 580 with prebuilt, signed modules (GTX 900 to RTX 40, including GTX 1080) |
 | Kernel | Stock Ubuntu kernel with `preempt=full threadirqs` (full preemption), plus SteamOS-style sysctls (`max_map_count`, no split-lock penalty, low swappiness) |
 | Gaming | GameMode, MangoHud, GOverlay, Protontricks, ProtonUp-Qt (Flatpak, for Proton-GE), Flathub enabled |
@@ -160,6 +160,7 @@ overlay/                      files installed into the system (/etc, /usr)
   usr/bin/goggles-theme       Glass / Lite switcher
   usr/bin/goggles-panel       taskbar layout switcher (Visor / wide)
   usr/bin/goggles-hud         show or remove the Goggles HUD widget
+  usr/bin/gogglesxr           GogglesXR setup and self-check (VR streaming to standalone headsets)
   usr/bin/goggles-update      Goggles Update (plus its daily check in usr/lib/systemd/user/)
   usr/local/bin/goggles-vr-setup   SteamVR setup helper
   usr/libexec/gogglesos/      lock-screen patch + re-apply hook run after package updates

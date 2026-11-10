@@ -1,0 +1,321 @@
+#!/usr/bin/python3
+"""GogglesXR setup: makes VR games reach the headset without per-game settings.
+
+GogglesXR's first version uses WiVRn (the Monado-based streaming runtime) as its engine and
+does the setup that otherwise has to be done by hand:
+
+  1. SteamVR games: puts the OpenVR-to-OpenXR translator (xrizer) first in the OpenVR paths
+     file, and puts it back if SteamVR moves itself to the top.
+  2. Steam's game containers: sets the two variables that let games see the runtime for the
+     whole desktop session, so no launch options are needed.
+  3. Checks every link in the chain and says what is wrong in plain words.
+
+  gogglesxr on        set everything up (run once; safe to repeat)
+  gogglesxr off       hand VR back to SteamVR (for a wired headset such as the Vive)
+  gogglesxr status    check the whole chain; exit 0 if games will reach the headset
+  gogglesxr fix       repair the OpenVR paths file if GogglesXR is on (used by the watcher)
+  gogglesxr start     open the runtime's window to connect a headset
+  gogglesxr           ask with a dialog (menu entry)
+"""
+import glob
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+ENGINE_APP = "io.github.wivrn.wivrn"
+HOME = os.path.expanduser("~")
+CONFIG = os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config")
+RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+STATE_FILE = os.path.join(CONFIG, "gogglesxr", "state")
+VRPATHS = os.path.join(CONFIG, "openvr", "openvrpaths.vrpath")
+ENV_FILE = os.path.join(CONFIG, "environment.d", "60-gogglesxr.conf")
+ACTIVE_RUNTIME = os.path.join(CONFIG, "openxr", "1", "active_runtime.json")
+IPC_SOCKET = os.path.join(RUNTIME_DIR, "wivrn", "comp_ipc")
+FLATPAK_ROOTS = ["/var/lib/flatpak", os.path.join(HOME, ".local/share/flatpak")]
+WATCHER = "gogglesxr-guard.path"
+TITLE = "GogglesXR"
+ENV_VARS = ("PRESSURE_VESSEL_IMPORT_OPENXR_1_RUNTIMES", "PRESSURE_VESSEL_FILESYSTEMS_RW")
+
+
+# ------------------------------------------------------------------ engine
+def engine_dir():
+    """Folder of the installed runtime (stable across its updates), or None."""
+    for root in FLATPAK_ROOTS:
+        d = os.path.join(root, "app", ENGINE_APP)
+        if os.path.isdir(os.path.join(d, "current", "active", "files")):
+            return d
+    return None
+
+
+def translator_dir():
+    d = engine_dir()
+    if d:
+        x = os.path.join(d, "current", "active", "files", "xrizer")
+        if os.path.isdir(x):
+            return x
+    return None
+
+
+def is_translator(path):
+    return "xrizer" in path.lower() or "opencomposite" in path.lower()
+
+
+# ------------------------------------------------------------------ state
+def is_on():
+    try:
+        with open(STATE_FILE, encoding="utf-8") as f:
+            return f.read().strip() == "on"
+    except OSError:
+        return False
+
+
+def set_state(on):
+    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        f.write("on\n" if on else "off\n")
+
+
+# ------------------------------------------------------------------ OpenVR paths
+def read_vrpaths():
+    try:
+        with open(VRPATHS, encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError
+    except (OSError, ValueError):
+        data = {"jsonid": "vrpathreg", "version": 1, "config": [], "log": [], "external_drivers": None}
+    if not isinstance(data.get("runtime"), list):
+        data["runtime"] = []
+    return data
+
+
+def write_vrpaths(data):
+    os.makedirs(os.path.dirname(VRPATHS), exist_ok=True)
+    if os.path.exists(VRPATHS) and not os.path.exists(VRPATHS + ".gogglesxr-backup"):
+        shutil.copy2(VRPATHS, VRPATHS + ".gogglesxr-backup")
+    tmp = VRPATHS + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent="\t")
+        f.write("\n")
+    os.replace(tmp, VRPATHS)
+
+
+def order_vrpaths(translator_first):
+    """Put the translator first (GogglesXR on) or last (SteamVR in charge). True if changed."""
+    data = read_vrpaths()
+    before = list(data["runtime"])
+    others = [r for r in before if not is_translator(r)]
+    tr = translator_dir()
+    if translator_first:
+        if not tr:
+            return False
+        data["runtime"] = [tr] + others
+    else:
+        # keep a translator entry at the end so switching back on stays quick
+        data["runtime"] = others + ([tr] if tr else [])
+    if data["runtime"] == before:
+        return False
+    write_vrpaths(data)
+    return True
+
+
+# ------------------------------------------------------------------ session environment
+def wanted_env():
+    d = engine_dir()
+    return {"PRESSURE_VESSEL_IMPORT_OPENXR_1_RUNTIMES": "1", "PRESSURE_VESSEL_FILESYSTEMS_RW": d} if d else {}
+
+
+def systemctl(*args):
+    try:
+        return subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True, timeout=20).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def apply_env(on):
+    env = wanted_env() if on else {}
+    if env:
+        os.makedirs(os.path.dirname(ENV_FILE), exist_ok=True)
+        with open(ENV_FILE, "w", encoding="utf-8") as f:
+            f.write("# Written by gogglesxr: lets Steam's game containers see the VR runtime\n")
+            for k, v in env.items():
+                f.write(f"{k}={v}\n")
+        systemctl("set-environment", *[f"{k}={v}" for k, v in env.items()])     # apps started from now on
+    else:
+        try:
+            os.remove(ENV_FILE)
+        except OSError:
+            pass
+        systemctl("unset-environment", *ENV_VARS)
+
+
+def process_env(name):
+    """Environment of the first running process called `name`, or None if it isn't running."""
+    for path in glob.glob("/proc/[0-9]*/comm"):
+        try:
+            with open(path, encoding="utf-8") as f:
+                if f.read().strip() != name:
+                    continue
+            with open(os.path.join(os.path.dirname(path), "environ"), "rb") as f:
+                raw = f.read().split(b"\0")
+            return dict(e.decode(errors="replace").split("=", 1) for e in raw if b"=" in e)
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def running(*names):
+    return any(process_env(n) is not None for n in names)
+
+
+# ------------------------------------------------------------------ checks
+def checks():
+    """List of (ok, title, what to do). ok is True, False, or None for 'not yet'."""
+    out = []
+    eng = engine_dir()
+    out.append((bool(eng), "VR runtime installed",
+                "" if eng else "Install it: flatpak install flathub " + ENGINE_APP + "  (or run: gogglesxr on)"))
+    on = is_on()
+    out.append((on, "GogglesXR is switched on", "" if on else "Run: gogglesxr on"))
+
+    data = read_vrpaths()
+    first = data["runtime"][0] if data["runtime"] else ""
+    ok = bool(first) and is_translator(first) and os.path.isdir(first)
+    out.append((ok, "SteamVR games go to GogglesXR",
+                "" if ok else ("SteamVR is first in the list of VR systems. Run: gogglesxr on" if first
+                               else "No VR system is registered for SteamVR games. Run: gogglesxr on")))
+
+    steam = process_env("steam")
+    want = wanted_env()
+    if steam is None:
+        saved = os.path.exists(ENV_FILE)
+        out.append((saved if want else False, "Steam will let games see the runtime",
+                    "" if saved else "Run: gogglesxr on"))
+    else:
+        ok = bool(want) and all(steam.get(k) == v for k, v in want.items())
+        out.append((ok, "Steam lets games see the runtime",
+                    "" if ok else "Steam was started before GogglesXR was set up. Quit Steam completely (Steam > Exit) and open it again."))
+
+    if running("vrserver", "vrcompositor", "vrmonitor"):
+        out.append((False, "SteamVR is not in the way", "SteamVR is running and will take the games. Close SteamVR."))
+    else:
+        out.append((True, "SteamVR is not in the way", ""))
+
+    server = os.path.exists(IPC_SOCKET)
+    out.append((True if server else None, "Runtime running",
+                "" if server else "Open GogglesXR (run: gogglesxr start) and connect the headset."))
+    if server:
+        target = os.path.realpath(ACTIVE_RUNTIME)
+        ok = False
+        try:
+            with open(target, encoding="utf-8") as f:
+                lib = json.load(f)["runtime"]["library_path"]
+            ok = os.path.exists(os.path.join(os.path.dirname(target), lib))
+        except (OSError, ValueError, KeyError):
+            pass
+        out.append((ok, "OpenXR games can find the runtime",
+                    "" if ok else "The OpenXR registration is missing or broken. Reconnect the headset in the runtime's window."))
+    return out
+
+
+def status_text():
+    lines, good = [], True
+    for ok, title, todo in checks():
+        mark = {True: "✓", False: "✗", None: "…"}[ok]
+        lines.append(f" {mark} {title}" + (f"\n     {todo}" if todo else ""))
+        if ok is False:
+            good = False
+    lines.append("")
+    lines.append("Ready: start a VR game from Steam. No launch options are needed." if good
+                 else "Not ready yet: see the ✗ lines above.")
+    lines.append("Games that only support the Oculus runtime can't run in VR on Linux.")
+    return "\n".join(lines), good
+
+
+# ------------------------------------------------------------------ commands
+def turn_on():
+    if not engine_dir():
+        print("Installing the VR runtime (" + ENGINE_APP + ") from Flathub…")
+        try:
+            subprocess.run(["flatpak", "install", "-y", "--noninteractive", "flathub", ENGINE_APP], check=False)
+        except OSError:
+            pass
+        if not engine_dir():
+            print("gogglesxr: the VR runtime isn't installed and couldn't be installed automatically.\n"
+                  "Install it with:  flatpak install flathub " + ENGINE_APP, file=sys.stderr)
+            return 1
+    set_state(True)
+    order_vrpaths(True)
+    apply_env(True)
+    systemctl("enable", "--now", WATCHER)
+    text, _ = status_text()
+    print(text)
+    if process_env("steam") is not None:
+        print("\nSteam is running: quit it completely and open it again so games pick up the change.")
+    return 0
+
+
+def turn_off():
+    set_state(False)
+    systemctl("disable", "--now", WATCHER)
+    order_vrpaths(False)
+    apply_env(False)
+    print("GogglesXR is off. SteamVR is in charge of VR games again.\n"
+          "If Steam is running, quit it completely and open it again.")
+    return 0
+
+
+def fix():
+    if is_on() and order_vrpaths(True):
+        print("gogglesxr: put the SteamVR-game translator back in first place")
+    return 0
+
+
+def start():
+    try:
+        subprocess.Popen(["flatpak", "run", ENGINE_APP], start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as e:
+        print(f"gogglesxr: couldn't start the runtime ({e})", file=sys.stderr)
+        return 1
+    return 0
+
+
+def gui():
+    if not shutil.which("kdialog"):
+        return status()
+    text, _ = status_text()
+    choice = subprocess.run(
+        ["kdialog", "--title", TITLE, "--menu", text.replace("\n", "<br>").replace(" ", "&nbsp;"),
+         "start", "Open the runtime and connect a headset",
+         "on", "Set up / repair GogglesXR",
+         "off", "Switch off (use SteamVR, for wired headsets)"],
+        capture_output=True, text=True)
+    if choice.returncode != 0:
+        return 0
+    rc = {"start": start, "on": turn_on, "off": turn_off}[choice.stdout.strip()]()
+    if choice.stdout.strip() != "start":
+        text, _ = status_text()
+        subprocess.run(["kdialog", "--title", TITLE, "--msgbox", text])
+    return rc
+
+
+def status():
+    text, good = status_text()
+    print(text)
+    return 0 if good else 1
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "--gui"
+    actions = {"on": turn_on, "off": turn_off, "status": status, "fix": fix, "start": start, "--gui": gui}
+    if cmd not in actions:
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    return actions[cmd]()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

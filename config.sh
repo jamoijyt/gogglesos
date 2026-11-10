@@ -58,6 +58,7 @@ APT_PACKAGES=(
 # Flatpaks (installed system-wide from Flathub at build time; failures are non-fatal)
 FLATPAKS=(
   net.davidotek.pupgui2      # ProtonUp-Qt: install Proton-GE etc.
+  io.github.wivrn.wivrn      # GogglesXR's engine: streams VR to standalone headsets (set up by gogglesxr)
 )
 
 # Third-party .deb downloads
