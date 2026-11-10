@@ -213,6 +213,46 @@
   .muted { color: var(--muted); }
   .skeleton { color: var(--muted); }
 
+  /* Editions */
+  .editions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 22px; }
+  .edition { position: relative; text-align: left; cursor: pointer; padding: 22px 22px 20px; border-radius: var(--radius); color: var(--text);
+    background: var(--glass); border: 1px solid var(--line); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+    box-shadow: 0 12px 40px rgba(0,0,0,.35); display: grid; gap: 10px; align-content: start; transition: border-color .2s, box-shadow .2s; }
+  .edition:hover { border-color: rgba(61,220,132,.55); }
+  .edition[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 34px rgba(61,220,132,.35), 0 12px 40px rgba(0,0,0,.35); }
+  .edition[aria-pressed="true"]::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+    background: linear-gradient(160deg, rgba(61,220,132,.12), transparent 55%); }
+  .edition .chipset { width: 54px; height: 54px; border-radius: 14px; display: grid; place-items: center; color: var(--accent);
+    background: radial-gradient(circle at 35% 30%, rgba(241,255,156,.28), rgba(61,220,132,.1) 60%); border: 1px solid var(--line); box-shadow: inset 0 0 14px rgba(61,220,132,.25); }
+  .edition .chipset svg { width: 28px; height: 28px; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .edition h3 { margin: 4px 0 0; font-size: 1.2rem; }
+  .edition .for { color: var(--muted); margin: 0; font-size: .95rem; }
+  .edition .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+  .edition .tags span { font: 500 .74rem var(--font-mono); color: var(--muted); border: 1px solid var(--line-soft); border-radius: 6px; padding: 2px 7px; }
+  .edition .pick { margin-top: 6px; font: 600 .88rem var(--font-head); color: var(--accent); }
+  .edition[aria-pressed="true"] .pick::before { content: "✓ "; }
+  .ribbon { position: absolute; top: 14px; right: 14px; font: 600 .68rem var(--font-head); letter-spacing: .08em; text-transform: uppercase;
+    color: var(--accent-ink); background: linear-gradient(120deg, var(--accent), var(--accent-2)); padding: 4px 9px; border-radius: 999px; }
+  .ribbon.soon { color: var(--warn); background: rgba(232,197,71,.14); border: 1px solid rgba(232,197,71,.4); }
+  .ed-panel { margin-top: 18px; padding: 26px; display: grid; grid-template-columns: 1.15fr .85fr; gap: 26px; animation: fade .3s ease; }
+  .ed-panel h2 { margin: 0 0 6px; font-size: clamp(1.35rem, 2.6vw, 1.8rem); }
+  .ed-panel .iso { display: inline-flex; align-items: center; gap: 8px; font: 500 .86rem var(--font-mono); color: var(--muted); margin: 4px 0 14px; word-break: break-all; }
+  .ed-side { border-left: 1px solid var(--line-soft); padding-left: 26px; display: grid; gap: 14px; align-content: start; }
+  .dl-box { padding: 18px; border-radius: 14px; background: rgba(0,0,0,.28); border: 1px dashed rgba(232,197,71,.45); text-align: center; }
+  .dl-box .big { display: block; font: 700 1.35rem var(--font-head); color: var(--warn); margin-bottom: 4px; }
+  .dl-box p { color: var(--muted); font-size: .92rem; margin: 0 0 12px; }
+  .btn[aria-disabled="true"] { opacity: .55; cursor: not-allowed; filter: grayscale(.4); }
+  .btn[aria-disabled="true"]:hover { transform: none; box-shadow: none; }
+  .spec { list-style: none; padding: 0; margin: 0; font-size: .92rem; }
+  .spec li { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--line-soft); }
+  .spec li:last-child { border-bottom: 0; }
+  .spec span:first-child { color: var(--muted); }
+  .finder { margin-top: 18px; padding: 18px 22px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
+  .finder label { font: 600 .95rem var(--font-head); }
+  .finder select { flex: 1; min-width: 220px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: rgba(0,0,0,.35); color: var(--text); font: 500 .95rem var(--font-body); }
+  .finder output { color: var(--muted); font-size: .92rem; flex-basis: 100%; }
+  .finder output b { color: var(--accent); }
+
   /* Status badges */
   .status { display: inline-flex; align-items: center; gap: 6px; font: 600 .74rem var(--font-head); text-transform: uppercase; letter-spacing: .05em;
     padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
@@ -274,12 +314,15 @@
     .look { margin-left: auto; }
     .gh { display: none; }
     .items li { grid-template-columns: 1fr; gap: 4px; }
+    .editions { grid-template-columns: 1fr; }
+    .ed-panel { grid-template-columns: 1fr; }
+    .ed-side { border-left: 0; padding-left: 0; border-top: 1px solid var(--line-soft); padding-top: 18px; }
     .hs-panel { grid-template-columns: 1fr; }
     .hs-lens { width: 64px; height: 64px; font-size: 1.15rem; }
   }
   @media (hover: none) { .tilt { transform: none; } .tilt::after { display: none; } }
   @media (prefers-reduced-motion: reduce) {
-    section[data-tab], .tl-panel { animation: none; } html { scroll-behavior: auto; }
+    section[data-tab], .tl-panel, .ed-panel { animation: none; } html { scroll-behavior: auto; }
     .tilt { transform: none; transition: none; } .reveal { opacity: 1; translate: none; transition: none; }
     .chip i { animation: none; } .btn:hover { transform: none; } .tl-fill { transition: none; }
   }
@@ -453,9 +496,38 @@
   <section data-tab="download">
     <p class="eyebrow">Download</p>
     <h1>Get Goggles OS</h1>
-    <p class="lead">Grab the latest release ISO, write it to a USB stick, and boot from it to try or install Goggles OS.</p>
+    <p class="lead">Goggles OS comes in three editions. They're the same system with different graphics drivers, so pick the one that matches your GPU. The first public ISOs are <b>coming soon</b>; until then you can <a href="#build">build any edition yourself</a>.</p>
 
-    <div class="glass card" id="release" style="margin-top:20px">
+    <div class="editions" id="editions" role="group" aria-label="Editions"></div>
+    <div class="glass ed-panel" id="ed-panel" aria-live="polite"></div>
+
+    <div class="glass finder">
+      <label for="gpu-find">Not sure which one?</label>
+      <select id="gpu-find">
+        <option value="">Pick your graphics card…</option>
+        <optgroup label="NVIDIA">
+          <option value="open">GeForce RTX 50 series (5090, 5080, 5070, 5060…)</option>
+          <option value="nvidia">GeForce RTX 40 series (4090 to 4060)</option>
+          <option value="nvidia">GeForce RTX 30 series (3090 to 3050)</option>
+          <option value="nvidia">GeForce RTX 20 series / GTX 16 series</option>
+          <option value="nvidia">GeForce GTX 10 series (1080 Ti to 1050)</option>
+          <option value="nvidia">GeForce GTX 900 series (980 Ti to 950)</option>
+          <option value="old">Older NVIDIA (GTX 700 series or earlier)</option>
+        </optgroup>
+        <optgroup label="AMD">
+          <option value="amd">Radeon RX 9000 / 7000 / 6000 series</option>
+          <option value="amd">Radeon RX 5000 series, Vega, RX 400/500 series</option>
+          <option value="amd">Older AMD (R9, HD 7000 series)</option>
+        </optgroup>
+        <optgroup label="Intel">
+          <option value="amd">Intel Arc (A-series or B-series)</option>
+          <option value="amd">Intel integrated graphics</option>
+        </optgroup>
+      </select>
+      <output id="gpu-out" for="gpu-find"></output>
+    </div>
+
+    <div class="glass card" id="release" style="margin-top:20px" hidden>
       <p class="skeleton">Checking for the latest release…</p>
     </div>
 
@@ -463,7 +535,7 @@
     <ol class="steps">
       <li><h3>Check the download</h3>
         <p>Compare the ISO's SHA-256 with the <code>.sha256</code> file from the release. In PowerShell:</p>
-        <div class="code"><pre>Get-FileHash .\gogglesos-26.04-nvidia-amd64.iso -Algorithm SHA256</pre></div>
+        <div class="code"><pre>Get-FileHash .\<span id="dl-iso-name">gogglesos-26.04-nvidia-amd64.iso</span> -Algorithm SHA256</pre></div>
       </li>
       <li><h3>Write it to a USB stick</h3>
         <p>Use <a href="https://rufus.ie" rel="noopener">Rufus</a> (choose <b>DD Image mode</b> when asked) or <a href="https://etcher.balena.io" rel="noopener">balenaEtcher</a>. This erases the stick.</p>
@@ -616,6 +688,8 @@ sudo apt install xorriso squashfs-tools imagemagick webp</pre></div>
       scene.setActive(id === "home");
     }
     if (id === "roadmap") showPhase(/^[0-6]$/.test(sub) ? +sub : phaseIndex, false);
+    if (id === "download" && EDITIONS.some(e => e.id === sub)) showEdition(sub, false);
+    if (id === "build" && ["nvidia", "open", "amd"].includes(sub)) setBuild("gpu", sub);
   }
   window.addEventListener("hashchange", route);
 
@@ -658,18 +732,20 @@ sudo apt install xorriso squashfs-tools imagemagick webp</pre></div>
       document.documentElement.style.setProperty("--px", e.clientX + "px");
       document.documentElement.style.setProperty("--py", e.clientY + "px");
     }, { passive: true });
-    $$(".tilt").forEach(el => {
-      el.addEventListener("pointermove", e => {
-        if (e.pointerType !== "mouse") return;
-        const r = el.getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
-        el.style.setProperty("--ry", ((x - .5) * 9).toFixed(2) + "deg");
-        el.style.setProperty("--rx", ((.5 - y) * 9).toFixed(2) + "deg");
-        el.style.setProperty("--mx", (x * 100).toFixed(1) + "%");
-        el.style.setProperty("--my", (y * 100).toFixed(1) + "%");
-      });
-      el.addEventListener("pointerleave", () => { el.style.setProperty("--rx", "0deg"); el.style.setProperty("--ry", "0deg"); });
-    });
   }
+  function tilt(el) {
+    if (REDUCED) return;
+    el.addEventListener("pointermove", e => {
+      if (e.pointerType !== "mouse") return;
+      const r = el.getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+      el.style.setProperty("--ry", ((x - .5) * 9).toFixed(2) + "deg");
+      el.style.setProperty("--rx", ((.5 - y) * 9).toFixed(2) + "deg");
+      el.style.setProperty("--mx", (x * 100).toFixed(1) + "%");
+      el.style.setProperty("--my", (y * 100).toFixed(1) + "%");
+    });
+    el.addEventListener("pointerleave", () => { el.style.setProperty("--rx", "0deg"); el.style.setProperty("--ry", "0deg"); });
+  }
+  $$(".tilt").forEach(tilt);
   if ("IntersectionObserver" in window && !REDUCED) {
     const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } }), { rootMargin: "0px 0px -8% 0px" });
     $$(".reveal").forEach(el => io.observe(el));
@@ -729,12 +805,93 @@ sudo apt install xorriso squashfs-tools imagemagick webp</pre></div>
     const mode = { full: "", resume: " Re-runs customisation on the already unpacked system.", repack: " Only repacks the existing system into a new ISO." }[build.mode];
     $("#b-note").innerHTML = `${gpu}${mode} Output: <code>${iso}</code>`;
   }
-  [["#b-gpu", "gpu"], ["#b-mode", "mode"]].forEach(([sel, key]) => $$(sel + " button").forEach(b => b.addEventListener("click", () => {
-    build[key] = b.dataset.v;
-    $$(sel + " button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+  function setBuild(key, v) {
+    build[key] = v;
+    const sel = key === "gpu" ? "#b-gpu" : "#b-mode";
+    $$(sel + " button").forEach(x => x.setAttribute("aria-pressed", String(x.dataset.v === v)));
     renderBuild();
-  })));
+  }
+  [["#b-gpu", "gpu"], ["#b-mode", "mode"]].forEach(([sel, key]) => $$(sel + " button").forEach(b => b.addEventListener("click", () => setBuild(key, b.dataset.v))));
   renderBuild();
+
+  // ---- Download editions (GPU_VARIANT / NVIDIA_BRANCH in config.sh)
+  const EDITIONS = [
+    { id: "nvidia", name: "NVIDIA", recommended: true, iso: "gogglesos-26.04-nvidia-amd64.iso",
+      forWho: "GeForce GTX 900 series up to RTX 40 series",
+      tags: ["GTX 900", "GTX 10", "RTX 20", "RTX 30", "RTX 40"],
+      blurb: "The standard edition. It has the NVIDIA 580 driver with prebuilt, Secure Boot-signed modules, plus Mesa, so it also works on AMD and Intel. If you're unsure, pick this one.",
+      includes: ["NVIDIA 580 driver (GTX 900 to RTX 40, including the GTX 1080)", "Mesa and Vulkan for AMD and Intel", "32-bit graphics libraries for Steam and Proton", "Kernel mode-setting set up for SteamVR direct mode and Wayland"],
+      spec: [["Driver", "NVIDIA 580 + Mesa"], ["Secure Boot", "Yes, signed modules"], ["Build setting", "default"], ["Size", "Larger than AMD"]],
+      icon: '<rect x="4" y="6" width="16" height="12" rx="2"/><path d="M8 10h8M8 14h5"/>' },
+    { id: "open", name: "NVIDIA RTX 50", iso: "gogglesos-26.04-nvidia-amd64.iso",
+      forWho: "GeForce RTX 50 series",
+      tags: ["RTX 5090", "RTX 5080", "RTX 5070", "RTX 5060"],
+      blurb: "For the newest NVIDIA cards, which need NVIDIA's open kernel modules. It's built from the 580-open branch and does not support GTX 10-series cards. It also works on RTX 20, 30 and 40.",
+      includes: ["NVIDIA 580 open kernel modules", "Mesa and Vulkan for AMD and Intel", "32-bit graphics libraries for Steam and Proton", "Everything else in the NVIDIA edition"],
+      spec: [["Driver", "NVIDIA 580-open + Mesa"], ["Secure Boot", "Yes, signed modules"], ["Build setting", "NVIDIA_BRANCH=580-open"], ["Not for", "GTX 10 and 900 series"]],
+      icon: '<rect x="4" y="6" width="16" height="12" rx="2"/><path d="M8 10h8M8 14h5"/><path d="M17 13l2 1.5-2 1.5"/>' },
+    { id: "amd", name: "AMD / Intel", iso: "gogglesos-26.04-amd-amd64.iso",
+      forWho: "Radeon and Intel Arc graphics",
+      tags: ["Radeon RX", "Vega", "Intel Arc", "Integrated"],
+      blurb: "Mesa only, with no NVIDIA driver, so the ISO is smaller. AMD and Intel drivers are already part of Linux, so nothing extra is needed.",
+      includes: ["Mesa and Vulkan (RADV for AMD, ANV for Intel)", "32-bit graphics libraries for Steam and Proton", "Everything else in the NVIDIA edition, minus the NVIDIA driver"],
+      spec: [["Driver", "Mesa"], ["Secure Boot", "Yes"], ["Build setting", "GPU_VARIANT=amd"], ["Size", "Smallest"]],
+      icon: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/>' },
+  ];
+  const edBox = $("#editions"), edPanel = $("#ed-panel");
+  let editionId = "nvidia", releaseData = null;
+  EDITIONS.forEach(e => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "edition tilt"; b.dataset.id = e.id; b.setAttribute("aria-pressed", "false");
+    b.innerHTML = `<span class="ribbon ${e.recommended ? "" : "soon"}">${e.recommended ? "Recommended" : "Coming soon"}</span>
+      <span class="chipset"><svg viewBox="0 0 24 24" aria-hidden="true">${e.icon}</svg></span>
+      <h3>${esc(e.name)}</h3><p class="for">${esc(e.forWho)}</p>
+      <span class="tags">${e.tags.map(t => `<span>${esc(t)}</span>`).join("")}</span>
+      <span class="pick">Choose this edition</span>`;
+    b.addEventListener("click", () => showEdition(e.id, true));
+    tilt(b);
+    edBox.appendChild(b);
+  });
+  function showEdition(id, updateHash) {
+    editionId = id;
+    const e = EDITIONS.find(x => x.id === id);
+    $$(".edition", edBox).forEach(b => b.setAttribute("aria-pressed", String(b.dataset.id === id)));
+    $("#dl-iso-name").textContent = e.iso;
+    // A matching ISO in the latest GitHub release turns "coming soon" into a real download
+    const asset = releaseData && (releaseData.assets || []).find(a => a.name === e.iso);
+    const dl = asset
+      ? `<a class="btn primary" href="${esc(asset.browser_download_url)}">Download ${esc(e.name)} ISO</a>
+         <p class="muted" style="margin:10px 0 0">${size(asset.size)} · ${esc(releaseData.tag_name)}</p>`
+      : `<div class="dl-box"><span class="big">Coming soon</span>
+           <p>The ${esc(e.name)} ISO hasn't been published yet.</p>
+           <a class="btn primary" aria-disabled="true" role="button" tabindex="-1" onclick="return false">Download ISO</a></div>`;
+    edPanel.innerHTML = `<div>
+        <p class="eyebrow">${esc(e.name)} edition${e.recommended ? " · recommended" : ""}</p>
+        <h2>Goggles OS 26.04 for ${esc(e.forWho)}</h2>
+        <span class="iso">${esc(e.iso)}</span>
+        <p>${esc(e.blurb)}</p>
+        <h3 style="font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:14px 0 6px">What's in it</h3>
+        <ul class="ticks">${e.includes.map(i => `<li>${esc(i)}</li>`).join("")}</ul>
+      </div>
+      <div class="ed-side">
+        ${dl}
+        <ul class="spec">${e.spec.map(([k, v]) => `<li><span>${esc(k)}</span><span>${esc(v)}</span></li>`).join("")}</ul>
+        <div class="actions" style="margin:0">
+          <a class="btn small" href="#build/${e.id}">Build this edition yourself</a>
+          <a class="btn small" href="https://github.com/${REPO}" rel="noopener">Watch the repo for the release</a>
+        </div>
+      </div>`;
+    if (updateHash) history.replaceState(null, "", "#download/" + id);
+  }
+  showEdition("nvidia", false);
+  $("#gpu-find").addEventListener("change", ev => {
+    const v = ev.target.value, out = $("#gpu-out");
+    if (!v) { out.textContent = ""; return; }
+    if (v === "old") { out.innerHTML = "That card is older than the NVIDIA 580 driver supports. The <b>AMD / Intel</b> edition will boot with the open-source Nouveau driver, but it isn't suited to VR."; showEdition("amd", true); return; }
+    const e = EDITIONS.find(x => x.id === v);
+    out.innerHTML = `Use the <b>${esc(e.name)}</b> edition.${v === "nvidia" ? " It's the default build." : ""}`;
+    showEdition(v, true);
+  });
 
   // ---- Roadmap timeline (summarised from ROADMAP.md)
   const PHASES = [
@@ -991,20 +1148,15 @@ sudo apt install xorriso squashfs-tools imagemagick webp</pre></div>
     const box = document.getElementById("release");
     try {
       const r = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: { Accept: "application/vnd.github+json" } });
-      if (r.status === 404) return noRelease(box);
+      if (r.status === 404) return;            // no release yet: the editions say "coming soon"
       if (!r.ok) throw new Error(r.status);
-      renderRelease(box, await r.json());
+      releaseData = await r.json();
+      renderRelease(box, releaseData);
+      box.hidden = false;
+      showEdition(editionId, false);
     } catch (e) {
-      box.innerHTML = `<h3>Couldn't check for releases</h3>
-        <p class="muted">GitHub didn't respond. See the <a href="https://github.com/${REPO}/releases">releases page</a> directly.</p>`;
+      // GitHub didn't answer (often its rate limit). The editions already say "coming soon".
     }
-  }
-
-  function noRelease(box) {
-    box.innerHTML = `<h3>No release yet</h3>
-      <p class="muted">Goggles OS hasn't published a download yet. Watch the
-      <a href="https://github.com/${REPO}">repository</a> for the first release, or
-      <a href="#build">build the ISO yourself</a> today.</p>`;
   }
 
   function renderRelease(box, rel) {
