@@ -347,7 +347,7 @@ def dashboard(extra=()):
     project = os.path.join(DATA, "dashboard")
     os.makedirs(project, exist_ok=True)
     for name in os.listdir(src):
-        if name.endswith((".gd", ".tscn", ".godot")) and os.path.isfile(os.path.join(src, name)):
+        if name.endswith((".gd", ".tscn", ".godot", ".tres", ".uid")) and os.path.isfile(os.path.join(src, name)):
             shutil.copy2(os.path.join(src, name), os.path.join(project, name))
     godot = find_godot() or fetch_godot()
     if not godot:

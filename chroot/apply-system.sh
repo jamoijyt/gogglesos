@@ -377,7 +377,8 @@ log "GogglesXR dashboard"
 XR_DASH=/usr/share/$DISTRO_ID/gogglesxr-dashboard
 if [ -f "$G/gogglesxr/dashboard/project.godot" ]; then
   rm -rf "${XR_DASH:?}"; mkdir -p "$XR_DASH"
-  install -m644 "$G"/gogglesxr/dashboard/project.godot "$G"/gogglesxr/dashboard/*.tscn "$G"/gogglesxr/dashboard/*.gd "$XR_DASH/"
+  install -m644 "$G"/gogglesxr/dashboard/project.godot "$G"/gogglesxr/dashboard/*.tscn "$G"/gogglesxr/dashboard/*.gd \
+    "$G"/gogglesxr/dashboard/*.tres "$G"/gogglesxr/dashboard/*.uid "$XR_DASH/"
 else
   warn "GogglesXR dashboard sources missing"
 fi
