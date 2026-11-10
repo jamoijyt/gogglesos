@@ -12,7 +12,6 @@ extends Control
 const SteamLibrary := preload("res://steam_library.gd")
 
 signal recentre_requested
-signal distance_changed(metres: float)
 signal scale_changed(factor: float)
 
 const SIZE := Vector2(1280, 860)
@@ -396,11 +395,9 @@ func _build_settings(body: Control) -> void:
 
 
 func _settings_appearance(page: Control) -> void:
-	var distance := _slider_row(page, "Distance", 80, 250, 150)
-	distance.value_changed.connect(func(v): distance_changed.emit(v / 100.0))
-	var scale_slider := _slider_row(page, "Size", 60, 160, 100)
+	var scale_slider := _slider_row(page, "Size", 50, 160, 100)
 	scale_slider.value_changed.connect(func(v): scale_changed.emit(v / 100.0))
-	page.add_child(_label("Distance is in centimetres from where you were looking when the dashboard opened.", &"Muted", true))
+	page.add_child(_label("To move the dashboard, hold grip on the status bar under the panel and point where you want it. While holding, push the stick forward to send it further away (bigger) or pull it back to bring it closer (smaller). Recentre puts it back in front of you.", &"Muted", true))
 
 
 func _settings_soon(page: Control) -> void:
@@ -447,7 +444,7 @@ func _build_strip() -> void:
 	_where.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_where.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(_where)
-	var help := _label("Grip + swipe: change panel    Trigger: select    Stick: scroll", &"Muted")
+	var help := _label("Grip + swipe: change panel    Grip this bar: move    Trigger: select", &"Muted")
 	help.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(help)
 
