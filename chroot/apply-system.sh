@@ -204,6 +204,10 @@ fi
 # Panel: floating; translucent in Glass, opaque in Lite (reads gogglesosrc written by goggles-theme)
 sed -i "s/^\( *\)panel_obj.floating = 0;/\1panel_obj.floating = 1;\n\1try { const gcfg = ConfigFile('gogglesosrc'); gcfg.group = 'Theme';\n\1  panel_obj.opacity = (gcfg.readEntry('Mode') === 'lite') ? 'opaque' : 'translucent'; } catch (e) {}/" \
   "$TPL/contents/layout.js"
+# Visor layout: the bar hugs its contents and sits centred (switch with goggles-panel)
+sed -i "s/^\( *\)setPanelSizeFn( *panel_obj, is_horiz );/&\n\1if ( is_horiz ) { try { panel_obj.lengthMode = 'fit'; panel_obj.alignment = 'center'; } catch (e) {} }/" \
+  "$TPL/contents/layout.js"
+grep -q "lengthMode = 'fit'" "$TPL/contents/layout.js" || warn "could not set the Visor taskbar layout (full-width bar kept)"
 
 install -D -m644 $A/appearance-glass.png /usr/share/$DISTRO_ID/appearance-glass.png
 install -D -m644 $A/appearance-lite.png  /usr/share/$DISTRO_ID/appearance-lite.png
@@ -227,7 +231,7 @@ sed -e 's/^Name=.*/Name=Goggles Dark/' \
 # Plasma desktop theme "gogglesos": Breeze shapes, more see-through, Goggles colours, stronger
 # blur contrast/saturation for a frosted-glass look. Missing files fall back to Breeze.
 PT_D=/usr/share/plasma/desktoptheme/gogglesos; BREEZE_D=/usr/share/plasma/desktoptheme/default
-rm -rf "${PT_D:?}"; mkdir -p $PT_D/translucent/widgets $PT_D/translucent/dialogs $PT_D/widgets $PT_D/dialogs
+rm -rf "${PT_D:?}"; mkdir -p $PT_D/translucent/widgets $PT_D/translucent/dialogs $PT_D/opaque/widgets $PT_D/widgets $PT_D/dialogs
 cat > $PT_D/metadata.json <<EOF
 { "KPlugin": { "Id": "gogglesos", "Name": "Goggles Glass", "Description": "Frosted green glass for Goggles OS",
   "License": "LGPL", "Version": "$DISTRO_VERSION", "Authors": [ { "Name": "$DISTRO_NAME" } ] },
@@ -247,11 +251,25 @@ cp /usr/share/color-schemes/GogglesDark.colors $PT_D/colors
 glassify() { # src dst opacity
   zcat "$1" | sed "s/opacity:0.85;fill:currentColor/opacity:$3;fill:currentColor/" | gzip -9n > "$2"
 }
-glassify $BREEZE_D/translucent/widgets/panel-background.svgz $PT_D/translucent/widgets/panel-background.svgz 0.55
+# Taskbar: the "Visor" (rounded glass bar with a glowing accent line along the top), drawn by
+# visor-panel.py for each transparency level. Falls back to a see-through Breeze bar.
+visor() { # dst opacity breeze-fallback
+  if python3 "$G/chroot/visor-panel.py" "$2" > "$1.tmp" && [ -s "$1.tmp" ]; then
+    gzip -9n < "$1.tmp" > "$1"; rm -f "$1.tmp"
+  else
+    rm -f "$1.tmp"; warn "could not draw the Visor taskbar ($1); using Breeze's"
+    [ -f "$3" ] && glassify "$3" "$1" "$2"
+  fi
+}
+visor $PT_D/translucent/widgets/panel-background.svgz 0.55 $BREEZE_D/translucent/widgets/panel-background.svgz
+visor $PT_D/widgets/panel-background.svgz             0.70 $BREEZE_D/widgets/panel-background.svgz
+visor $PT_D/opaque/widgets/panel-background.svgz      1    $BREEZE_D/opaque/widgets/panel-background.svgz
 glassify $BREEZE_D/translucent/dialogs/background.svgz       $PT_D/translucent/dialogs/background.svgz       0.62
 glassify $BREEZE_D/translucent/widgets/background.svgz       $PT_D/translucent/widgets/background.svgz       0.62
-glassify $BREEZE_D/widgets/panel-background.svgz             $PT_D/widgets/panel-background.svgz             0.70
 glassify $BREEZE_D/dialogs/background.svgz                   $PT_D/dialogs/background.svgz                   0.75
+# Plasma caches rendered theme graphics per theme version, so give each design its own
+THEME_REV=$(find $PT_D -type f \( -name '*.svgz' -o -name plasmarc \) -exec sha256sum {} + | sort | sha256sum | cut -c1-8)
+sed -i "s/\"Version\": \"[^\"]*\"/\"Version\": \"$DISTRO_VERSION.$THEME_REV\"/" $PT_D/metadata.json
 [ -d /usr/share/plasma/desktoptheme/kubuntu-dark/icons ] && cp -r /usr/share/plasma/desktoptheme/kubuntu-dark/icons $PT_D/ \
   && rm -f $PT_D/icons/start.svgz
 

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Goggles Taskbar
+Comment=Switch the taskbar between the centred Visor and a full-width bar
+Exec=goggles-panel
+Icon=preferences-desktop-theme
+Categories=Settings;DesktopSettings;
