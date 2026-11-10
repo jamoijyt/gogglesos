@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Goggles OS</title>
+<meta name="description" content="Goggles OS is a Linux distro built for PC VR gaming: SteamVR-ready, tuned for NVIDIA and AMD, with a frosted-glass KDE Plasma desktop.">
+<meta property="og:title" content="Goggles OS">
+<meta property="og:description" content="The Linux desktop built for PC VR gaming.">
+<meta property="og:image" content="images/screenshot-welcome.png">
+<link rel="icon" type="image/png" href="images/icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #071512;
+    --bg-2: #0b1f1b;
+    --glass: rgba(12, 38, 33, 0.58);
+    --glass-strong: rgba(10, 30, 26, 0.82);
+    --line: rgba(61, 220, 132, 0.22);
+    --line-soft: rgba(255, 255, 255, 0.08);
+    --text: #e6f3ee;
+    --muted: #9fbfb4;
+    --accent: #3ddc84;
+    --accent-ink: #052012;
+    --warn: #e8c547;
+    --radius: 18px;
+    --maxw: 1120px;
+    --font-head: "Outfit", system-ui, sans-serif;
+    --font-body: "Inter", system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.6 var(--font-body); -webkit-font-smoothing: antialiased;
+    min-height: 100vh; overflow-x: hidden;
+  }
+  /* Wallpaper backdrop, dimmed so text stays readable */
+  .backdrop { position: fixed; inset: 0; z-index: -1;
+    background: linear-gradient(180deg, rgba(5,18,15,.55), rgba(5,18,15,.92) 60%, var(--bg)),
+                url("images/wallpaper.webp") center / cover no-repeat; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre { font-family: var(--font-mono); font-size: .9em; }
+  code { background: rgba(0,0,0,.35); padding: .1em .4em; border-radius: 6px; border: 1px solid var(--line-soft); }
+
+  /* Header + tabs */
+  header { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(18px) saturate(1.6);
+    -webkit-backdrop-filter: blur(18px) saturate(1.6); background: rgba(6, 20, 17, .62);
+    border-bottom: 1px solid var(--line-soft); }
+  .bar { max-width: var(--maxw); margin: 0 auto; padding: 10px 20px; display: flex; align-items: center; gap: 18px; }
+  .brand { display: flex; align-items: center; gap: 10px; color: var(--text); font: 600 1.15rem var(--font-head); }
+  .brand img { width: 34px; height: 34px; border-radius: 8px; }
+  .brand:hover { text-decoration: none; }
+  nav { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
+  nav a { color: var(--muted); padding: 8px 14px; border-radius: 999px; font: 500 .95rem var(--font-head); }
+  nav a:hover { color: var(--text); background: rgba(255,255,255,.06); text-decoration: none; }
+  nav a[aria-current="page"] { color: var(--accent-ink); background: var(--accent); }
+  .gh { display: inline-flex; align-items: center; gap: 6px; color: var(--text); padding: 8px 12px;
+    border: 1px solid var(--line); border-radius: 999px; font: 500 .9rem var(--font-head); }
+  .gh:hover { border-color: var(--accent); text-decoration: none; }
+  .gh svg { width: 18px; height: 18px; fill: currentColor; }
+
+  main { max-width: var(--maxw); margin: 0 auto; padding: 32px 20px 64px; }
+  section[data-tab] { display: none; animation: fade .35s ease; }
+  section[data-tab].active { display: block; }
+  @keyframes fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  h1, h2, h3 { font-family: var(--font-head); line-height: 1.2; margin: 0 0 .5em; }
+  h1 { font-size: clamp(2.2rem, 5vw, 3.6rem); font-weight: 700; letter-spacing: -.01em; }
+  h2 { font-size: clamp(1.6rem, 3vw, 2.2rem); font-weight: 600; margin-top: 1.6em; }
+  h3 { font-size: 1.15rem; font-weight: 600; }
+  p { margin: 0 0 1em; }
+  .lead { font-size: 1.15rem; color: var(--muted); max-width: 60ch; }
+
+  .glass { background: var(--glass); border: 1px solid var(--line); border-radius: var(--radius);
+    backdrop-filter: blur(16px) saturate(1.5); -webkit-backdrop-filter: blur(16px) saturate(1.5);
+    box-shadow: 0 12px 40px rgba(0,0,0,.35); }
+  .card { padding: 22px; }
+
+  /* Home */
+  .hero { display: grid; grid-template-columns: 1.05fr 1fr; gap: 40px; align-items: center; padding: 24px 0 8px; }
+  .hero-logo { width: min(440px, 100%); height: auto; margin-bottom: 18px; }
+  .chip { display: inline-block; font: 500 .8rem var(--font-head); letter-spacing: .04em; text-transform: uppercase;
+    color: var(--warn); border: 1px solid rgba(232,197,71,.45); padding: 4px 10px; border-radius: 999px; margin-bottom: 16px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 22px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 20px; border-radius: 12px;
+    font: 600 1rem var(--font-head); border: 1px solid var(--line); color: var(--text); background: rgba(255,255,255,.04); cursor: pointer; }
+  .btn:hover { border-color: var(--accent); text-decoration: none; }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .hero-shot { padding: 10px; }
+  .hero-shot img { display: block; width: 100%; border-radius: 12px; }
+
+  .grid { display: grid; gap: 18px; }
+  .grid.c3 { grid-template-columns: repeat(3, 1fr); }
+  .grid.c2 { grid-template-columns: repeat(2, 1fr); }
+  .feature .icon { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center;
+    background: rgba(61,220,132,.14); color: var(--accent); margin-bottom: 12px; }
+  .feature .icon svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .feature p { color: var(--muted); margin: 0; }
+
+  .shots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .shots figure { margin: 0; padding: 8px; }
+  .shots img { width: 100%; display: block; border-radius: 10px; cursor: zoom-in; }
+  .shots figcaption { color: var(--muted); font-size: .9rem; padding: 8px 4px 2px; }
+
+  /* Lists / tables */
+  ul.ticks { list-style: none; padding: 0; margin: 0; }
+  ul.ticks li { padding-left: 28px; position: relative; margin: 8px 0; }
+  ul.ticks li::before { content: ""; position: absolute; left: 4px; top: .55em; width: 12px; height: 7px;
+    border-left: 2px solid var(--accent); border-bottom: 2px solid var(--accent); transform: rotate(-45deg); }
+  table { width: 100%; border-collapse: collapse; font-size: .95rem; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th { color: var(--muted); font: 500 .85rem var(--font-head); text-transform: uppercase; letter-spacing: .05em; }
+  .table-wrap { overflow-x: auto; }
+
+  /* Code blocks with copy button */
+  .code { position: relative; margin: 10px 0 18px; }
+  .code pre { margin: 0; padding: 16px 18px; overflow-x: auto; background: rgba(0,0,0,.45);
+    border: 1px solid var(--line-soft); border-radius: 12px; color: #d9f5e6; }
+  .copy { position: absolute; top: 8px; right: 8px; font: 500 .8rem var(--font-head); padding: 5px 10px;
+    border-radius: 8px; border: 1px solid var(--line); background: var(--glass-strong); color: var(--muted); cursor: pointer; }
+  .copy:hover { color: var(--text); border-color: var(--accent); }
+
+  .steps { counter-reset: s; list-style: none; padding: 0; margin: 0; }
+  .steps > li { counter-increment: s; position: relative; padding-left: 52px; margin: 0 0 22px; }
+  .steps > li::before { content: counter(s); position: absolute; left: 0; top: -2px; width: 36px; height: 36px;
+    border-radius: 50%; display: grid; place-items: center; font: 600 1rem var(--font-head);
+    background: rgba(61,220,132,.15); color: var(--accent); border: 1px solid var(--line); }
+
+  .note { border-left: 3px solid var(--warn); padding: 12px 16px; background: rgba(232,197,71,.07); border-radius: 0 12px 12px 0; color: #f3e7b8; }
+  .note.info { border-color: var(--accent); background: rgba(61,220,132,.07); color: var(--text); }
+
+  /* Download */
+  .release-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; align-items: baseline; }
+  .release-head .meta { color: var(--muted); }
+  .asset { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line-soft); flex-wrap: wrap; }
+  .asset:last-child { border-bottom: 0; }
+  .asset .name { font-family: var(--font-mono); font-size: .92rem; word-break: break-all; }
+  .asset .size { color: var(--muted); font-size: .9rem; }
+  .muted { color: var(--muted); }
+  .skeleton { color: var(--muted); }
+
+  /* Roadmap */
+  .phase { display: grid; grid-template-columns: 130px 1fr; gap: 16px; padding: 18px 22px; }
+  .status { font: 600 .78rem var(--font-head); text-transform: uppercase; letter-spacing: .05em; padding: 4px 10px; border-radius: 999px; justify-self: start; height: fit-content; }
+  .s-done { background: rgba(61,220,132,.18); color: var(--accent); }
+  .s-wip { background: rgba(232,197,71,.16); color: var(--warn); }
+  .s-plan { background: rgba(255,255,255,.07); color: var(--muted); }
+  .phase p { margin: 4px 0 0; color: var(--muted); }
+
+  footer { max-width: var(--maxw); margin: 0 auto; padding: 28px 20px 48px; color: var(--muted); font-size: .88rem; border-top: 1px solid var(--line-soft); }
+
+  /* Lightbox */
+  .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: none; place-items: center; z-index: 50; padding: 24px; cursor: zoom-out; }
+  .lightbox.open { display: grid; }
+  .lightbox img { max-width: 100%; max-height: 100%; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+
+  @media (max-width: 860px) {
+    .hero { grid-template-columns: 1fr; gap: 24px; }
+    .grid.c3, .grid.c2, .shots { grid-template-columns: 1fr; }
+    .bar { flex-wrap: wrap; gap: 10px; }
+    nav { margin-left: 0; width: 100%; overflow-x: auto; flex-wrap: nowrap; }
+    .gh { display: none; }
+    .phase { grid-template-columns: 1fr; gap: 8px; }
+  }
+  @media (prefers-reduced-motion: reduce) { section[data-tab] { animation: none; } html { scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+<div class="backdrop" aria-hidden="true"></div>
+
+<header>
+  <div class="bar">
+    <a class="brand" href="#home"><img src="images/icon.png" alt="">Goggles OS</a>
+    <nav aria-label="Sections">
+      <a href="#home">Home</a>
+      <a href="#features">Features</a>
+      <a href="#download">Download</a>
+      <a href="#build">Build</a>
+      <a href="#roadmap">Roadmap</a>
+    </nav>
+    <a class="gh" href="https://github.com/jamoijyt/gogglesos" rel="noopener">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      GitHub
+    </a>
+  </div>
+</header>
+
+<main>
+  <!-- HOME -->
+  <section data-tab="home">
+    <div class="hero">
+      <div>
+        <span class="chip">Early development</span><br>
+        <img class="hero-logo" src="images/logo-dark.png" alt="Goggles OS">
+        <h1 style="font-size:clamp(1.7rem,3.4vw,2.5rem)">The Linux desktop built for PC VR gaming.</h1>
+        <p class="lead">SteamVR-ready out of the box, tuned for NVIDIA and AMD graphics, with a frosted-glass KDE Plasma desktop. Based on Kubuntu 26.04 LTS.</p>
+        <div class="actions">
+          <a class="btn primary" href="#download">Download</a>
+          <a class="btn" href="#build">Build it yourself</a>
+          <a class="btn" href="#features">What's inside</a>
+        </div>
+      </div>
+      <div class="glass hero-shot">
+        <img src="images/screenshot-welcome.png" alt="The Goggles OS live welcome screen with Try and Install buttons" data-zoom>
+      </div>
+    </div>
+
+    <h2>At a glance</h2>
+    <div class="grid c3">
+      <div class="glass card feature">
+        <div class="icon"><svg viewBox="0 0 24 24"><path d="M3 9a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v5a3 3 0 0 1-3 3h-3l-2-3h-2l-2 3H6a3 3 0 0 1-3-3z"/></svg></div>
+        <h3>SteamVR ready</h3>
+        <p>Steam and headset rules preinstalled. One click installs SteamVR and applies the async-reprojection fix.</p>
+      </div>
+      <div class="glass card feature">
+        <div class="icon"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="10" rx="2"/><path d="M7 17v2M17 17v2M7 11h4M15 11h2"/></svg></div>
+        <h3>Your GPU, ready</h3>
+        <p>NVIDIA 580 driver (GTX 900 to RTX 40) and Mesa for AMD/Intel, with Secure Boot-signed modules.</p>
+      </div>
+      <div class="glass card feature">
+        <div class="icon"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="12" rx="3"/><path d="M4 9h16"/></svg></div>
+        <h3>Glass or Lite</h3>
+        <p>Pick a frosted-glass desktop or a lighter, opaque one when you install. Switch any time.</p>
+      </div>
+    </div>
+
+    <h2>Screenshots</h2>
+    <div class="shots">
+      <figure class="glass"><img src="images/screenshot-welcome.png" alt="Live welcome screen" data-zoom><figcaption>Live welcome screen: try it or install it</figcaption></figure>
+      <figure class="glass"><img src="images/screenshot-appearance.png" alt="Installer Appearance page with Glass and Lite options" data-zoom><figcaption>Choose Glass or Lite in the installer</figcaption></figure>
+      <figure class="glass"><img src="images/screenshot-lockscreen.png" alt="Green Goggles OS lock screen" data-zoom><figcaption>Lock screen</figcaption></figure>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section data-tab="features">
+    <h1>What's inside</h1>
+    <p class="lead">Goggles OS starts from the official Kubuntu 26.04 LTS release and adds everything a PC VR player needs, so you get Ubuntu's long-term support and KDE Plasma underneath.</p>
+
+    <div class="grid c2" style="margin-top:24px">
+      <div class="glass card">
+        <h3>VR</h3>
+        <ul class="ticks">
+          <li>Steam with <code>steam-devices</code> rules for Valve Index, HTC Vive, Quest and controllers</li>
+          <li><b>Install SteamVR</b>: opens Steam's installer in one click</li>
+          <li><b>Goggles VR Setup</b>: gives SteamVR's compositor the priority it needs for async reprojection</li>
+        </ul>
+      </div>
+      <div class="glass card">
+        <h3>Graphics</h3>
+        <ul class="ticks">
+          <li>NVIDIA 580 with prebuilt, Secure Boot-signed modules: GTX 900, 10, RTX 20, 30 and 40 series</li>
+          <li>Mesa and Vulkan (64- and 32-bit) for AMD and Intel</li>
+          <li>Wayland Plasma session with DRM leasing for headsets</li>
+        </ul>
+      </div>
+      <div class="glass card">
+        <h3>Performance</h3>
+        <ul class="ticks">
+          <li>Ubuntu kernel with full preemption (<code>preempt=full threadirqs</code>) for steady frame timing</li>
+          <li>SteamOS-style tuning: large <code>max_map_count</code>, no split-lock penalty, low swappiness</li>
+          <li>GameMode and MangoHud ready to use</li>
+        </ul>
+      </div>
+      <div class="glass card">
+        <h3>Gaming &amp; streaming</h3>
+        <ul class="ticks">
+          <li>Proton tools: ProtonUp-Qt (Proton-GE) and Protontricks</li>
+          <li>OBS Studio and Discord preinstalled</li>
+          <li>Flathub enabled in Discover</li>
+        </ul>
+      </div>
+      <div class="glass card">
+        <h3>Desktop</h3>
+        <ul class="ticks">
+          <li>Frosted-glass taskbar and menus, Goggles Dark colours, rounded window corners</li>
+          <li>Windows 10-style start menu with VR and creator tiles</li>
+          <li>Papirus-Dark icons with green folders, green lock screen</li>
+        </ul>
+      </div>
+      <div class="glass card">
+        <h3>Installer &amp; safety</h3>
+        <ul class="ticks">
+          <li>Calamares installer with a Glass/Lite <b>Appearance</b> step</li>
+          <li>Works with Secure Boot on</li>
+          <li>Build checks file permissions and pins every third-party tool by checksum</li>
+        </ul>
+      </div>
+    </div>
+
+    <h2>System requirements</h2>
+    <div class="glass card table-wrap">
+      <table>
+        <thead><tr><th></th><th>Minimum</th><th>Recommended for VR</th></tr></thead>
+        <tbody>
+          <tr><td>CPU</td><td>64-bit (x86-64)</td><td>6+ cores (e.g. Ryzen 5 / Core i5, 2019 or newer)</td></tr>
+          <tr><td>Memory</td><td>8 GB</td><td>16 GB or more</td></tr>
+          <tr><td>Graphics</td><td>Any GPU with a Mesa or NVIDIA 580 driver</td><td>NVIDIA GTX 1070 / AMD RX 5600 XT or better</td></tr>
+          <tr><td>Storage</td><td>32 GB</td><td>128 GB+ (SteamVR and VR games are large)</td></tr>
+          <tr><td>Firmware</td><td colspan="2">UEFI (Secure Boot on or off). Legacy BIOS boot also works.</td></tr>
+          <tr><td>USB stick</td><td colspan="2">8 GB or larger to write the ISO</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="muted" style="margin-top:10px">NVIDIA RTX 50-series cards need a build made with <code>NVIDIA_BRANCH=580-open</code> (see <a href="#build">Build</a>).</p>
+  </section>
+
+  <!-- DOWNLOAD -->
+  <section data-tab="download">
+    <h1>Download</h1>
+    <p class="lead">Grab the latest release ISO, write it to a USB stick, and boot from it to try or install Goggles OS.</p>
+
+    <div class="glass card" id="release" style="margin-top:20px">
+      <p class="skeleton">Checking for the latest release…</p>
+    </div>
+
+    <h2>Install from USB</h2>
+    <ol class="steps">
+      <li><h3>Check the download</h3>
+        <p>Compare the ISO's SHA-256 with the <code>.sha256</code> file from the release. In PowerShell:</p>
+        <div class="code"><pre>Get-FileHash .\gogglesos-26.04-nvidia-amd64.iso -Algorithm SHA256</pre></div>
+      </li>
+      <li><h3>Write it to a USB stick</h3>
+        <p>Use <a href="https://rufus.ie" rel="noopener">Rufus</a> (choose <b>DD Image mode</b> when asked) or <a href="https://etcher.balena.io" rel="noopener">balenaEtcher</a>. This erases the stick.</p>
+      </li>
+      <li><h3>Boot it</h3>
+        <p>Restart and open your PC's boot menu (usually <b>F11</b>, <b>F12</b> or <b>F8</b>). Secure Boot can stay on. Choose <b>Try Goggles OS</b> to test it without changing anything, or <b>Install Goggles OS</b>.</p>
+      </li>
+      <li><h3>Install alongside Windows (optional)</h3>
+        <p>Install to a separate drive, or shrink a partition in Windows' Disk Management first and use <b>Manual partitioning</b> in the installer. Turn off Windows Fast Startup if you'll share a drive. Back up important files before partitioning.</p>
+      </li>
+      <li><h3>After installing</h3>
+        <p>Open <b>Install SteamVR</b> from the start menu, launch SteamVR once, then run <b>Goggles VR Setup</b>.</p>
+      </li>
+    </ol>
+    <p class="note">Goggles OS is in early development. Test in a virtual machine, or keep backups, before installing it on a PC you rely on.</p>
+  </section>
+
+  <!-- BUILD -->
+  <section data-tab="build">
+    <h1>Build it yourself</h1>
+    <p class="lead">The build remasters the official Kubuntu ISO: it unpacks the live system, customises it in a chroot, and repacks a new ISO that keeps Kubuntu's Secure Boot chain, live session and installer.</p>
+
+    <h2>What you need</h2>
+    <div class="grid c2">
+      <div class="glass card">
+        <h3>A Linux build environment</h3>
+        <ul class="ticks">
+          <li>Ubuntu 26.04: a real install or <b>WSL2 on Windows</b></li>
+          <li>Root access (the build uses <code>chroot</code>)</li>
+          <li>Internet access for packages</li>
+        </ul>
+      </div>
+      <div class="glass card">
+        <h3>Space and memory</h3>
+        <ul class="ticks">
+          <li>About 20 GB for the unpacked system (inside WSL)</li>
+          <li>About 15 GB for the base and output ISOs</li>
+          <li>16 GB RAM; close other apps during compression</li>
+        </ul>
+      </div>
+    </div>
+
+    <h2>Steps</h2>
+    <ol class="steps">
+      <li><h3>Windows only: install Ubuntu in WSL</h3>
+        <div class="code"><pre>wsl --install -d Ubuntu</pre></div>
+        <p class="muted">Consider moving WSL to a big drive: <code>wsl --manage Ubuntu --move D:\WSL\Ubuntu</code></p>
+      </li>
+      <li><h3>Get the source and the build tools</h3>
+        <div class="code"><pre>git clone https://github.com/jamoijyt/gogglesos.git
+cd gogglesos
+sudo apt install xorriso squashfs-tools imagemagick webp</pre></div>
+      </li>
+      <li><h3>Check the settings</h3>
+        <p>Open <code>config.sh</code> to change where the ISOs go (<code>CACHE_DIR</code>, <code>OUTPUT_DIR</code>), the package list and the GPU variant.</p>
+      </li>
+      <li><h3>Build</h3>
+        <div class="code"><pre>sudo ./build.sh</pre></div>
+        <p>The first build downloads the Kubuntu ISO and takes about an hour. The result is <code>gogglesos-26.04-nvidia-amd64.iso</code> in your output folder.</p>
+      </li>
+    </ol>
+
+    <h2>Build options</h2>
+    <div class="glass card table-wrap">
+      <table>
+        <thead><tr><th>Option</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td><code>GPU_VARIANT=amd</code></td><td>Leave out the NVIDIA driver for a smaller ISO (the default <code>nvidia</code> ISO also works on AMD)</td></tr>
+          <tr><td><code>NVIDIA_BRANCH=580-open</code></td><td>NVIDIA open kernel modules for RTX 50-series (drops GTX 10-series support)</td></tr>
+          <tr><td><code>RESUME=1</code></td><td>Re-run customisation on the already unpacked system (after a failed build)</td></tr>
+          <tr><td><code>REUSE_ROOTFS=1</code></td><td>Only repack the existing system into a new ISO</td></tr>
+          <tr><td><code>SQUASH_CPUS</code>, <code>SQUASH_MEM</code></td><td>Limit compression threads and memory (defaults 6 and 1G)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="muted" style="margin-top:10px">Example: <code>sudo GPU_VARIANT=amd ./build.sh</code></p>
+
+    <h2>Test in a virtual machine</h2>
+    <p>On Windows with VMware Workstation, this creates a UEFI + Secure Boot VM with 3D acceleration and boots the ISO:</p>
+    <div class="code"><pre>.\vmware-test-vm.ps1</pre></div>
+    <p class="muted">Run it again after each build to load the new ISO, or add <code>-Recreate</code> for a blank disk.</p>
+  </section>
+
+  <!-- ROADMAP -->
+  <section data-tab="roadmap">
+    <h1>Roadmap</h1>
+    <p class="lead">Where Goggles OS is heading. Details and open questions live in <a href="https://github.com/jamoijyt/gogglesos/blob/main/ROADMAP.md">ROADMAP.md</a>.</p>
+    <div class="grid" style="margin-top:20px">
+      <div class="glass phase"><span class="status s-done">Done</span><div><h3>Bootable distro</h3><p>Kubuntu remaster with Secure Boot, NVIDIA 580 and Mesa, low-latency tuning, Steam and gaming tools, full branding.</p></div></div>
+      <div class="glass phase"><span class="status s-wip">In progress</span><div><h3>Look &amp; feel</h3><p>Glass and Lite modes, glass taskbar, Windows 10-style start menu, rounded corners, green icons and lock screen.</p></div></div>
+      <div class="glass phase"><span class="status s-plan">Planned</span><div><h3>Goggles Home</h3><p>A custom VR home space: launch games from your library and land back in Goggles Home when they close.</p></div></div>
+      <div class="glass phase"><span class="status s-plan">Planned</span><div><h3>Goggles Link</h3><p>Quest streaming built for Goggles OS: low-latency video encoding on NVIDIA and AMD, over Wi-Fi or USB.</p></div></div>
+      <div class="glass phase"><span class="status s-plan">Planned</span><div><h3>Legacy headsets</h3><p>Oculus Rift CV1 support through community drivers, routed into SteamVR.</p></div></div>
+      <div class="glass phase"><span class="status s-plan">Planned</span><div><h3>Everyday apps</h3><p>Web-app versions of apps that aren't on Linux yet, such as Claude and CapCut.</p></div></div>
+      <div class="glass phase"><span class="status s-plan">Planned</span><div><h3>Updates &amp; infrastructure</h3><p>Goggles tools as packages so installed systems get updates, plus automated ISO builds.</p></div></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <p>Goggles OS build scripts are licensed under the <a href="https://github.com/jamoijyt/gogglesos/blob/main/LICENSE">GPL-3.0</a>. The Goggles OS name, logos and wallpaper are not covered by the GPL.</p>
+  <p>Goggles OS is an independent project, not affiliated with Canonical, KDE, Valve, Meta or NVIDIA. Ubuntu and Kubuntu are trademarks of Canonical Ltd.</p>
+</footer>
+
+<div class="lightbox" id="lightbox" role="dialog" aria-label="Screenshot"><img alt=""></div>
+
+<script>
+  const REPO = "jamoijyt/gogglesos";
+  const TABS = ["home", "features", "download", "build", "roadmap"];
+
+  // ---- Tabs (hash routing)
+  function showTab() {
+    const id = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "home";
+    document.querySelectorAll("section[data-tab]").forEach(s => s.classList.toggle("active", s.dataset.tab === id));
+    document.querySelectorAll("nav a").forEach(a => a.toggleAttribute("aria-current", a.getAttribute("href") === "#" + id));
+    document.title = id === "home" ? "Goggles OS" : `${id[0].toUpperCase() + id.slice(1)} · Goggles OS`;
+    window.scrollTo({ top: 0 });
+    if (id === "download") loadRelease();
+  }
+  window.addEventListener("hashchange", showTab);
+
+  // ---- Copy buttons on code blocks
+  document.querySelectorAll(".code").forEach(block => {
+    const btn = document.createElement("button");
+    btn.className = "copy"; btn.type = "button"; btn.textContent = "Copy";
+    btn.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(block.querySelector("pre").innerText); btn.textContent = "Copied"; }
+      catch { btn.textContent = "Select & copy"; }
+      setTimeout(() => (btn.textContent = "Copy"), 1600);
+    });
+    block.appendChild(btn);
+  });
+
+  // ---- Screenshot lightbox
+  const lb = document.getElementById("lightbox");
+  document.querySelectorAll("img[data-zoom]").forEach(img => img.addEventListener("click", () => {
+    lb.querySelector("img").src = img.src; lb.querySelector("img").alt = img.alt; lb.classList.add("open");
+  }));
+  lb.addEventListener("click", () => lb.classList.remove("open"));
+  document.addEventListener("keydown", e => { if (e.key === "Escape") lb.classList.remove("open"); });
+
+  // ---- Latest release (GitHub API)
+  let releaseLoaded = false;
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const size = b => b >= 1e9 ? (b / 1e9).toFixed(2) + " GB" : b >= 1e6 ? (b / 1e6).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1e3)) + " KB";
+
+  async function loadRelease() {
+    if (releaseLoaded) return;
+    releaseLoaded = true;
+    const box = document.getElementById("release");
+    try {
+      const r = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: { Accept: "application/vnd.github+json" } });
+      if (r.status === 404) return noRelease(box);
+      if (!r.ok) throw new Error(r.status);
+      renderRelease(box, await r.json());
+    } catch (e) {
+      box.innerHTML = `<h3>Couldn't check for releases</h3>
+        <p class="muted">GitHub didn't respond. See the <a href="https://github.com/${REPO}/releases">releases page</a> directly.</p>`;
+    }
+  }
+
+  function noRelease(box) {
+    box.innerHTML = `<h3>No release yet</h3>
+      <p class="muted">Goggles OS hasn't published a download yet. Watch the
+      <a href="https://github.com/${REPO}">repository</a> for the first release, or
+      <a href="#build">build the ISO yourself</a> today.</p>`;
+  }
+
+  function renderRelease(box, rel) {
+    const assets = rel.assets || [];
+    const parts = assets.filter(a => /\.iso\.part\d+$|\.iso\.\d{3}$/i.test(a.name));
+    // Release notes may carry an external download link (the ISO is larger than GitHub's 2 GB file limit):
+    // a line like "Download: https://..." in the release description.
+    const ext = (rel.body || "").match(/^\s*download\s*:\s*(https:\/\/\S+)/im);
+    const date = new Date(rel.published_at).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+    let html = `<div class="release-head"><h3 style="margin:0">${esc(rel.name || rel.tag_name)}</h3>
+      <span class="meta">${esc(rel.tag_name)} · ${esc(date)}${rel.prerelease ? " · pre-release" : ""}</span></div>`;
+    if (ext) {
+      html += `<div class="actions"><a class="btn primary" href="${esc(ext[1])}" rel="noopener">Download ISO</a>
+        <a class="btn" href="${esc(rel.html_url)}">Release notes</a></div>`;
+    }
+    if (assets.length) {
+      html += `<div style="margin-top:16px">` + assets.map(a => `<div class="asset">
+          <span class="name">${esc(a.name)}</span>
+          <span><span class="size">${size(a.size)}</span>&nbsp;&nbsp;<a class="btn" style="padding:6px 14px" href="${esc(a.browser_download_url)}">Download</a></span>
+        </div>`).join("") + `</div>`;
+    } else if (!ext) {
+      html += `<p class="muted" style="margin-top:12px">This release has no files attached yet. See the <a href="${esc(rel.html_url)}">release notes</a>.</p>`;
+    }
+    if (parts.length) {
+      const base = parts[0].name.replace(/\.(part\d+|\d{3})$/i, "");
+      html += `<p class="note info" style="margin-top:16px">The ISO is split into ${parts.length} parts because of GitHub's 2 GB file limit.
+        Download all parts into one folder, then join them in PowerShell:</p>
+        <div class="code"><pre>cmd /c copy /b ${esc(parts.map(p => p.name).sort().join("+"))} ${esc(base)}</pre></div>
+        <p class="muted">On Linux: <code>cat ${esc(base)}.part* &gt; ${esc(base)}</code></p>`;
+    }
+    html += `<p class="muted" style="margin-top:14px">Older versions: <a href="https://github.com/${REPO}/releases">all releases</a>.</p>`;
+    box.innerHTML = html;
+    box.querySelectorAll(".code").forEach(block => {
+      const btn = document.createElement("button");
+      btn.className = "copy"; btn.type = "button"; btn.textContent = "Copy";
+      btn.addEventListener("click", async () => { try { await navigator.clipboard.writeText(block.querySelector("pre").innerText); btn.textContent = "Copied"; } catch {} setTimeout(() => (btn.textContent = "Copy"), 1600); });
+      block.appendChild(btn);
+    });
+  }
+
+  showTab();
+</script>
+</body>
+</html>
