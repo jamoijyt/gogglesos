@@ -11,6 +11,13 @@
 </p>
 
 <p align="center">
+  <a href="https://jamoijyt.github.io/gogglesos/"><b>Website</b></a> ·
+  <a href="https://jamoijyt.github.io/gogglesos/#download">Download</a> ·
+  <a href="https://jamoijyt.github.io/gogglesos/#build">Build guide</a> ·
+  <a href="ROADMAP.md">Roadmap</a>
+</p>
+
+<p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-GPL--3.0-3ddc84" alt="Licence: GPL-3.0"></a>
   <img src="https://img.shields.io/badge/based%20on-Kubuntu%2026.04%20LTS-0f3d36" alt="Based on Kubuntu 26.04 LTS">
   <img src="https://img.shields.io/badge/desktop-KDE%20Plasma%206.6-0f3d36" alt="KDE Plasma 6.6">
