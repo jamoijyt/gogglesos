@@ -4,7 +4,8 @@ DISTRO_NAME="Goggles OS"
 DISTRO_ID="gogglesos"              # used for file names / branding dirs (os-release ID stays "ubuntu")
 DISTRO_VERSION="26.04"
 DISTRO_CODENAME="resolute"
-DISTRO_URL="https://example.com/gogglesos"   # TODO: your website / GitHub
+DISTRO_URL="https://jamoijyt.github.io/gogglesos/"          # website (GitHub Pages, docs/)
+DISTRO_BUG_URL="https://github.com/jamoijyt/gogglesos/issues" # bug reports and support
 ISO_VOLID="GogglesOS 26.04"        # max 32 chars
 
 # Base: official Kubuntu LTS ISO (Plasma + Calamares + signed boot chain)

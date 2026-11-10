@@ -93,8 +93,8 @@ ID_LIKE=debian
 VARIANT="PCVR Edition"
 VARIANT_ID=$DISTRO_ID
 HOME_URL="$DISTRO_URL"
-SUPPORT_URL="$DISTRO_URL"
-BUG_REPORT_URL="$DISTRO_URL"
+SUPPORT_URL="$DISTRO_BUG_URL"
+BUG_REPORT_URL="$DISTRO_BUG_URL"
 UBUNTU_CODENAME=$DISTRO_CODENAME
 LOGO=$DISTRO_ID
 EOF
@@ -358,7 +358,7 @@ if [ -d $CB/kubuntu ]; then
          -e "s/^\( *versionedName: *\).*/\1$DISTRO_NAME $DISTRO_VERSION LTS/" \
          -e "s/^\( *shortVersionedName: *\).*/\1$DISTRO_NAME $DISTRO_VERSION/" \
          -e "s#^\( *productUrl: *\).*#\1$DISTRO_URL#" \
-         -e "s#^\( *supportUrl: *\).*#\1$DISTRO_URL#" \
+         -e "s#^\( *supportUrl: *\).*#\1$DISTRO_BUG_URL#" \
          -e 's/^\( *SidebarBackground: *\).*/\1"#0a2a26"/' \
          -e 's/^\( *SidebarTextCurrent: *\).*/\1"#3ddc84"/' "$D"
   sed -i "s/^branding: .*/branding: $DISTRO_ID/" /etc/calamares/settings.conf
