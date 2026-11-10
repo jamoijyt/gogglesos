@@ -1,0 +1,30 @@
+// Goggles OS defaults for fastfetch. Your own ~/.config/fastfetch/config.jsonc replaces this.
+{
+  "logo": {
+    "type": "file",
+    "source": "/usr/share/gogglesos/fastfetch-logo.txt",
+    "color": { "1": "green", "2": "light_yellow" }
+  },
+  "display": {
+    "color": { "keys": "green", "title": "light_yellow" }
+  },
+  "modules": [
+    "title",
+    "separator",
+    // fastfetch reports Ubuntu flavours by their own names, so read ours from os-release
+    { "type": "command", "key": "OS", "text": ". /etc/os-release && echo \"$PRETTY_NAME ($VARIANT)\"" },
+    "host",
+    "kernel",
+    "uptime",
+    "packages",
+    "display",
+    "de",
+    "wm",
+    "cpu",
+    "gpu",
+    "memory",
+    "disk",
+    "break",
+    "colors"
+  ]
+}

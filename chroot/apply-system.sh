@@ -265,6 +265,16 @@ if [ -f $TP/plasma-applet-tiledmenu-21c8540.tar.gz ]; then
   rm -rf "${TM_DIR:?}" && cp -r /tmp/tm/package "$TM_DIR" && chown -R root:root "$TM_DIR"
   find "$TM_DIR" -type d -exec chmod 755 {} + ; find "$TM_DIR" -type f -exec chmod 644 {} +
   rm -rf /tmp/tm
+  # Fix: the view buttons (Alphabetical / Categories) draw their own icon, so the button itself
+  # has none and the widget style falls back to drawing the label under it. Keep the name for
+  # the tooltip, and only give the button a label when the sidebar is expanded.
+  TMUI="$TM_DIR/contents/ui"
+  sed -i '/^\t\t\tSidebarViewButton {/,/^\t\t\t}/ s/^\(\t*\)text: i18n(/\1title: i18n(/' "$TMUI/SidebarView.qml"
+  sed -i 's/^\tproperty string appletIconName: ""$/&\n\tproperty string title: ""\n\ttext: expanded ? title : ""\n\ttipText: title/' "$TMUI/SidebarViewButton.qml"
+  sed -i -e 's/^\tproperty bool closeOnClick: true$/&\n\tproperty string tipText: text/' \
+         -e 's/^\t\ttext: sidebarItem.text$/\t\ttext: sidebarItem.tipText/' "$TMUI/SidebarItem.qml"
+  { [ "$(grep -c 'title: i18n(' "$TMUI/SidebarView.qml")" = 3 ] && grep -q 'tipText: title' "$TMUI/SidebarViewButton.qml" \
+      && grep -q 'text: sidebarItem.tipText' "$TMUI/SidebarItem.qml"; } || warn "could not patch the start menu's view buttons"
   TILES=$(python3 -c 'import json,sys,base64; print(base64.b64encode(json.dumps(json.load(open(sys.argv[1])),separators=(",",":")).encode()).decode())' $G/chroot/tiledmenu-tiles.json)
   # Swap Kickoff for Tiled Menu in the default panel and give it Goggles defaults
   sed -i -e "s/addWidget( 'org.kde.plasma.kickoff' )/addWidget( 'com.github.zren.tiledmenu' )/" \
@@ -285,6 +295,12 @@ install -o root -g root -m755 $TP/papirus-folders /usr/bin/papirus-folders
 # User picture: Goggles icon instead of Kubuntu's
 install -m644 $A/icons/256.png /etc/skel/.face
 gtk-update-icon-cache -q -f /usr/share/icons/Papirus-Dark 2>/dev/null || true
+
+log "Appearance: Goggles Glass terminal"
+# Konsole profile and colours come from the overlay (/usr/share/konsole); make it the default
+# for users who haven't picked a profile themselves
+kwriteconfig6 --file /etc/xdg/konsolerc --group "Desktop Entry" --key DefaultProfile GogglesGlass.profile \
+  || warn "could not set the default Konsole profile"
 
 log "Cleanup: Kubuntu desktop links and menu entries"
 rm -f /etc/skel/Desktop/org.kfocus.web.howtos.desktop /etc/skel/Desktop/org.kubuntu.web.home.desktop
