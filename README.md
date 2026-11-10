@@ -117,7 +117,8 @@ third_party/                  pinned, checksum-verified copies of upstream tools
 test-iso.sh                   QEMU boot test with screenshots (headless, window or browser view)
 vmware-test-vm.ps1            VMware test VM
 hyperv-*.ps1                  Hyper-V test VM and helpers
-docs/images/                  README logos and screenshots
+docs/index.html               the website (GitHub Pages)
+docs/images/                  website and README logos and screenshots
 ```
 
 ## Design notes
