@@ -279,6 +279,7 @@ def snapshot_paths(src, distro_id):
         f"/usr/share/plasma/layout-templates/org.{distro_id}.desktop.defaultPanel",
         f"/usr/share/plasma/desktoptheme/{distro_id}", "/usr/share/Kvantum/GogglesGlass",
         "/usr/share/color-schemes/GogglesDark.colors", "/usr/share/plasma/plasmoids/com.github.zren.tiledmenu",
+        f"/usr/share/plasma/plasmoids/org.{distro_id}.hud", f"/usr/share/sddm/themes/{distro_id}", "/etc/sddm.conf.d",
         "/usr/share/wallpapers/GogglesOS", f"/usr/share/{distro_id}", f"/usr/share/plymouth/themes/{distro_id}",
         "/usr/local/share/applications", "/usr/bin/papirus-folders", f"/usr/share/pixmaps/{distro_id}.png",
         f"/usr/share/pixmaps/{distro_id}-logo.png", "/etc/systemd/user/timers.target.wants/goggles-update-check.timer",

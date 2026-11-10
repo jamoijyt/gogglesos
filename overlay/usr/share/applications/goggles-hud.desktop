@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Goggles HUD
+Comment=Show or remove the system stats widget on the desktop
+Exec=goggles-hud
+Icon=utilities-system-monitor
+Categories=System;Monitor;

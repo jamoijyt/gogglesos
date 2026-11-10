@@ -253,20 +253,22 @@ glassify() { # src dst opacity
 }
 # Taskbar: the "Visor" (rounded glass bar with a glowing accent line along the top), drawn by
 # visor-panel.py for each transparency level. Falls back to a see-through Breeze bar.
-visor() { # dst opacity breeze-fallback
-  if python3 "$G/chroot/visor-panel.py" "$2" > "$1.tmp" && [ -s "$1.tmp" ]; then
+visor() { # dst opacity breeze-fallback [panel|dialog]
+  if python3 "$G/chroot/visor-panel.py" "$2" "${4:-panel}" > "$1.tmp" && [ -s "$1.tmp" ]; then
     gzip -9n < "$1.tmp" > "$1"; rm -f "$1.tmp"
   else
-    rm -f "$1.tmp"; warn "could not draw the Visor taskbar ($1); using Breeze's"
+    rm -f "$1.tmp"; warn "could not draw the Goggles Glass background ($1); using Breeze's"
     [ -f "$3" ] && glassify "$3" "$1" "$2"
   fi
 }
 visor $PT_D/translucent/widgets/panel-background.svgz 0.55 $BREEZE_D/translucent/widgets/panel-background.svgz
 visor $PT_D/widgets/panel-background.svgz             0.70 $BREEZE_D/widgets/panel-background.svgz
 visor $PT_D/opaque/widgets/panel-background.svgz      1    $BREEZE_D/opaque/widgets/panel-background.svgz
-glassify $BREEZE_D/translucent/dialogs/background.svgz       $PT_D/translucent/dialogs/background.svgz       0.62
+# Popups (volume, network, calendar, notifications): the same glass with a light rim, rounder
+# corners and a quieter accent line
+visor $PT_D/translucent/dialogs/background.svgz       0.62 $BREEZE_D/translucent/dialogs/background.svgz dialog
+visor $PT_D/dialogs/background.svgz                   0.75 $BREEZE_D/dialogs/background.svgz             dialog
 glassify $BREEZE_D/translucent/widgets/background.svgz       $PT_D/translucent/widgets/background.svgz       0.62
-glassify $BREEZE_D/dialogs/background.svgz                   $PT_D/dialogs/background.svgz                   0.75
 # Plasma caches rendered theme graphics per theme version, so give each design its own
 THEME_REV=$(find $PT_D -type f \( -name '*.svgz' -o -name plasmarc \) -exec sha256sum {} + | sort | sha256sum | cut -c1-8)
 sed -i "s/\"Version\": \"[^\"]*\"/\"Version\": \"$DISTRO_VERSION.$THEME_REV\"/" $PT_D/metadata.json
@@ -331,19 +333,51 @@ done
 chmod 755 /usr/local/bin/goggles-vr-setup
 
 log "Branding: login screen (SDDM)"
+# Goggles login theme (chroot/sddm-theme): plain QtQuick, no extra dependencies
+SDDM_GOGGLES=/usr/share/sddm/themes/$DISTRO_ID
 SDDM_THEME=$(grep -h '^Current=' /etc/sddm.conf.d/*.conf 2>/dev/null | tail -1 | cut -d= -f2 || true)
-SDDM_THEME=${SDDM_THEME:-breeze}
-if [ -d "/usr/share/sddm/themes/$SDDM_THEME" ]; then
-  cat > "/usr/share/sddm/themes/$SDDM_THEME/theme.conf.user" <<EOF
+if [ -d /usr/share/sddm/themes ]; then
+  rm -rf "${SDDM_GOGGLES:?}"; mkdir -p "$SDDM_GOGGLES"
+  install -m644 "$G"/chroot/sddm-theme/Main.qml "$G"/chroot/sddm-theme/metadata.desktop "$SDDM_GOGGLES/"
+  cat > "$SDDM_GOGGLES/theme.conf" <<EOF
+[General]
+background=$WP/contents/images/1920x1080.png
+logo=/usr/share/$DISTRO_ID/logo-dark.png
+EOF
+  # Make it the login screen unless another theme was chosen (System Settings > Login Screen)
+  case "$SDDM_THEME" in
+    ""|breeze|kubuntu|kubuntu-light|"$DISTRO_ID")
+      SDDM_CONF=$(grep -l '^Current=' /etc/sddm.conf.d/*.conf 2>/dev/null | tail -1 || true)
+      kwriteconfig6 --file "${SDDM_CONF:-/etc/sddm.conf.d/kde_settings.conf}" --group Theme --key Current "$DISTRO_ID" \
+        || warn "could not select the Goggles login screen" ;;
+    *) echo "Login screen: keeping the chosen theme ($SDDM_THEME)" ;;
+  esac
+fi
+# Kubuntu's own login themes stay installed; give them the Goggles wallpaper and logo too
+for t in breeze kubuntu; do
+  [ -d "/usr/share/sddm/themes/$t" ] || continue
+  cat > "/usr/share/sddm/themes/$t/theme.conf.user" <<EOF
 [General]
 background=$WP/contents/images/1920x1080.png
 type=image
 showlogo=shown
 logo=/usr/share/$DISTRO_ID/logo-dark.png
 EOF
-else
-  warn "SDDM theme $SDDM_THEME not found"
-fi
+done
+
+log "Branding: startup splash"
+# The lenses-and-visor splash (chroot/splash) replaces Breeze's in the Goggles look-and-feel
+install -D -m644 "$G/chroot/splash/Splash.qml" "$LNF/contents/splash/Splash.qml"
+sed -i "/^\[KSplash\]/,/^\[/ s#^Theme=.*#Theme=org.$DISTRO_ID.desktop#" "$LNF/contents/defaults"
+kwriteconfig6 --file /etc/xdg/ksplashrc --group KSplash --key Theme "org.$DISTRO_ID.desktop" || warn "could not select the Goggles splash"
+kwriteconfig6 --file /etc/xdg/ksplashrc --group KSplash --key Engine KSplashQML || true
+
+log "Desktop widget: Goggles HUD"
+# CPU / RAM / GPU / network readouts (chroot/hud-plasmoid). Shown with goggles-hud or Add Widgets
+HUD_DIR=/usr/share/plasma/plasmoids/org.$DISTRO_ID.hud
+rm -rf "${HUD_DIR:?}"; mkdir -p "$HUD_DIR/contents/ui"
+install -m644 "$G/chroot/hud-plasmoid/metadata.json" "$HUD_DIR/"
+install -m644 "$G"/chroot/hud-plasmoid/contents/ui/*.qml "$HUD_DIR/contents/ui/"
 
 log "Branding: boot splash (Plymouth)"
 PT=/usr/share/plymouth/themes/$DISTRO_ID
