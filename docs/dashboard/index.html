@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GogglesXR Dashboard Prototype</title>
+<meta name="description" content="Interactive prototype of the five-panel GogglesXR dashboard.">
+<link rel="icon" type="image/png" href="../images/icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #030b0a;
+    --glass: rgba(12, 38, 33, 0.72);
+    --glass-2: rgba(0, 0, 0, 0.3);
+    --line: rgba(61, 220, 132, 0.26);
+    --line-soft: rgba(255, 255, 255, 0.1);
+    --text: #e6f3ee;
+    --muted: #9fbfb4;
+    --accent: #3ddc84;
+    --accent-2: #f1ff9c;
+    --accent-ink: #052012;
+    --warn: #e8c547;
+    --gap: 28px;
+    --font-head: "Outfit", system-ui, sans-serif;
+    --font-body: "Inter", system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 var(--font-body);
+    -webkit-font-smoothing: antialiased; overflow: hidden; display: flex; flex-direction: column; }
+  button { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+
+  /* The "room": a dark space with a floor grid, standing in for the game behind the dashboard */
+  .room { position: fixed; inset: 0; z-index: -1; overflow: hidden;
+    background: radial-gradient(ellipse at 50% 35%, #0f3a32 0%, #06201c 45%, #020807 100%); }
+  .room::after { content: ""; position: absolute; left: -50%; right: -50%; bottom: -12%; height: 62%;
+    background:
+      linear-gradient(rgba(61,220,132,.2) 1px, transparent 1px) 0 0 / 100% 46px,
+      linear-gradient(90deg, rgba(61,220,132,.2) 1px, transparent 1px) 0 0 / 46px 100%;
+    transform: perspective(520px) rotateX(64deg); transform-origin: 50% 0;
+    -webkit-mask-image: linear-gradient(transparent, #000 45%); mask-image: linear-gradient(transparent, #000 45%); }
+
+  .top { display: flex; align-items: center; gap: 12px; padding: 10px 16px; font: 500 .85rem var(--font-head); color: var(--muted); }
+  .top a { color: var(--accent); text-decoration: none; }
+  .top a:hover { text-decoration: underline; }
+  .top b { color: var(--text); font-weight: 600; }
+  .top .tag { margin-left: auto; font: 500 .7rem var(--font-mono); letter-spacing: .1em; text-transform: uppercase;
+    color: var(--warn); border: 1px solid rgba(232,197,71,.45); padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+
+  .stage { flex: 1; min-height: 0; display: grid; place-items: center; padding: 6px 16px 14px; }
+  .dash { width: min(940px, 100%, calc((100vh - 190px) * 1.62)); display: grid; gap: 12px; }
+
+  /* Panel window */
+  .viewport { position: relative; aspect-ratio: 16 / 9.6; border-radius: 22px; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none;
+    background: rgba(3, 14, 12, .5); border: 1px solid var(--line); cursor: grab;
+    box-shadow: 0 0 0 1px rgba(0,0,0,.4), 0 30px 80px rgba(0,0,0,.55), 0 0 60px rgba(61,220,132,.12); }
+  .viewport.dragging { cursor: grabbing; }
+  .viewport::before { content: ""; position: absolute; top: 0; left: 26px; right: 26px; height: 2px; z-index: 5; border-radius: 2px;
+    background: var(--accent); box-shadow: 0 0 14px rgba(61,220,132,.8); pointer-events: none; }
+  .track { position: absolute; inset: 0; will-change: transform;
+    transform: translate(calc(var(--px, 0) * -1 * (100% + var(--gap)) + var(--dx, 0px)), calc(var(--py, 0) * -1 * (100% + var(--gap)) + var(--dy, 0px))); }
+  .track.anim { transition: transform .42s cubic-bezier(.2, .9, .25, 1); }
+  .panel { position: absolute; inset: 0; padding: 26px 28px 22px; display: flex; flex-direction: column; gap: 14px;
+    background: var(--glass); backdrop-filter: blur(18px) saturate(1.4); -webkit-backdrop-filter: blur(18px) saturate(1.4);
+    border-radius: 22px; overflow: hidden;
+    transform: translate(calc(var(--x) * (100% + var(--gap))), calc(var(--y) * (100% + var(--gap)))); }
+  .panel[inert] { opacity: .55; }
+  .panel > header { display: flex; align-items: baseline; gap: 12px; }
+  .panel h2 { margin: 0; font: 600 1.35rem var(--font-head); }
+  .eyebrow { font: 500 .68rem var(--font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+  .panel > header .eyebrow { margin-left: auto; }
+  .body { flex: 1; min-height: 0; }
+  .scroll { overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(61,220,132,.4) transparent; }
+
+  /* Edge hints: which panel lies in each direction */
+  .hint { position: absolute; z-index: 6; border: 1px solid var(--line); background: rgba(4, 18, 15, .82); color: var(--muted);
+    font: 500 .72rem var(--font-head); letter-spacing: .04em; padding: 4px 11px; border-radius: 999px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px; transition: opacity .2s, color .15s, border-color .15s; white-space: nowrap; }
+  .hint:hover { color: var(--text); border-color: var(--accent); }
+  .hint[hidden] { display: none; }
+  .hint.up { top: 9px; left: 50%; translate: -50% 0; } .hint.down { bottom: 9px; left: 50%; translate: -50% 0; }
+  .hint.left { left: 9px; top: 50%; translate: 0 -50%; writing-mode: vertical-rl; rotate: 180deg; padding: 11px 4px; }
+  .hint.right { right: 9px; top: 50%; translate: 0 -50%; writing-mode: vertical-rl; padding: 11px 4px; }
+  .hint i { font-style: normal; color: var(--accent); }
+  .hint.left i, .hint.right i { text-orientation: upright; }
+
+  /* Controls */
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 16px; border-radius: 12px; cursor: pointer;
+    font: 600 .92rem var(--font-head); border: 1px solid var(--line-soft); background: rgba(255,255,255,.05); color: var(--text); transition: all .15s; }
+  .btn:hover { border-color: var(--accent); background: rgba(61,220,132,.1); }
+  .btn.primary { background: linear-gradient(120deg, var(--accent), #8ff0a4); color: var(--accent-ink); border-color: transparent; box-shadow: 0 6px 22px rgba(61,220,132,.3); }
+  .btn.danger:hover { border-color: #ff8f8f; background: rgba(255,120,120,.12); }
+  .btn.small { padding: 6px 12px; font-size: .82rem; border-radius: 10px; }
+  .tile { border: 1px solid var(--line-soft); background: var(--glass-2); border-radius: 14px; padding: 14px; }
+  .toggle { display: grid; gap: 6px; justify-items: start; text-align: left; cursor: pointer; border: 1px solid var(--line-soft);
+    background: var(--glass-2); border-radius: 14px; padding: 12px 14px; transition: all .15s; }
+  .toggle b { font: 600 .92rem var(--font-head); } .toggle span { font-size: .78rem; color: var(--muted); }
+  .toggle .lens { width: 26px; height: 26px; border-radius: 50%; border: 2px solid rgba(255,255,255,.3); display: grid; place-items: center; }
+  .toggle .lens::after { content: ""; width: 12px; height: 12px; border-radius: 50%; background: transparent; transition: all .15s; }
+  .toggle[aria-pressed="true"] { border-color: var(--accent); background: rgba(61,220,132,.12); }
+  .toggle[aria-pressed="true"] .lens { border-color: var(--accent); }
+  .toggle[aria-pressed="true"] .lens::after { background: linear-gradient(var(--accent-2), var(--accent)); box-shadow: 0 0 10px rgba(61,220,132,.8); }
+  .slider { display: grid; grid-template-columns: 92px 1fr 46px; align-items: center; gap: 12px; }
+  .slider label { font: 500 .88rem var(--font-head); } .slider output { font: 500 .8rem var(--font-mono); color: var(--muted); text-align: right; }
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 22px; background: none; cursor: pointer; }
+  input[type=range]::-webkit-slider-runnable-track { height: 6px; border-radius: 6px; background: linear-gradient(90deg, var(--accent) var(--v, 50%), rgba(255,255,255,.14) var(--v, 50%)); }
+  input[type=range]::-moz-range-track { height: 6px; border-radius: 6px; background: rgba(255,255,255,.14); }
+  input[type=range]::-moz-range-progress { height: 6px; border-radius: 6px; background: var(--accent); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; margin-top: -7px; border-radius: 50%; background: var(--text); border: 4px solid var(--accent); }
+  input[type=range]::-moz-range-thumb { width: 13px; height: 13px; border-radius: 50%; background: var(--text); border: 4px solid var(--accent); }
+  .mono { font-family: var(--font-mono); }
+  .muted { color: var(--muted); }
+
+  /* Current game */
+  .game { display: grid; grid-template-columns: 1.05fr 1fr; gap: 20px; height: 100%; }
+  .art { border-radius: 16px; position: relative; overflow: hidden; min-height: 0; border: 1px solid var(--line-soft);
+    background: linear-gradient(140deg, #174d6b, #1d8a6b 55%, #e9d36a); display: grid; align-content: end; padding: 16px; }
+  .art::before { content: ""; position: absolute; inset: 0; background: radial-gradient(circle at 70% 25%, rgba(255,255,255,.35), transparent 40%), linear-gradient(transparent 40%, rgba(0,0,0,.6)); }
+  .art > * { position: relative; }
+  .art h3 { margin: 0; font: 700 1.5rem var(--font-head); line-height: 1.1; }
+  .live { display: inline-flex; align-items: center; gap: 7px; font: 500 .7rem var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--accent-2); }
+  .live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .game-side { display: grid; gap: 12px; align-content: space-between; min-height: 0; }
+  .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .actions .wide { grid-column: 1 / -1; }
+  .perf { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .perf div { text-align: center; padding: 10px 4px; border-radius: 12px; background: var(--glass-2); border: 1px solid var(--line-soft); }
+  .perf b { display: block; font: 600 1.15rem var(--font-mono); color: var(--accent); } .perf span { font-size: .72rem; color: var(--muted); }
+
+  /* Quick settings */
+  .quick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .sliders { display: grid; gap: 8px; }
+
+  /* Desktop */
+  .desk { display: grid; grid-template-columns: 1fr 150px; gap: 14px; height: 100%; }
+  .screen { border-radius: 14px; border: 1px solid var(--line-soft); position: relative; overflow: hidden; min-height: 0;
+    background: url("../images/wallpaper.webp") center / cover; }
+  .screen .win { position: absolute; left: 12%; top: 14%; width: 46%; height: 52%; border-radius: 10px; background: rgba(10,30,26,.86); border: 1px solid var(--line); }
+  .screen .win::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 22px; background: rgba(255,255,255,.08); border-radius: 10px 10px 0 0; }
+  .screen .bar { position: absolute; left: 50%; bottom: 8px; translate: -50% 0; width: 44%; height: 22px; border-radius: 12px; background: rgba(10,30,26,.8); border-top: 2px solid var(--accent); }
+  .screen .cursor { position: absolute; left: 61%; top: 47%; width: 0; height: 0; border-left: 9px solid #fff; border-bottom: 9px solid transparent; filter: drop-shadow(0 1px 2px #000); }
+  .desk-side { display: grid; gap: 8px; align-content: start; }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+
+  /* Library */
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chips button { cursor: pointer; padding: 5px 13px; border-radius: 999px; border: 1px solid var(--line-soft); background: var(--glass-2); font: 500 .82rem var(--font-head); color: var(--muted); }
+  .chips button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 2px 4px 6px 2px; }
+  .card { cursor: pointer; border: 1px solid var(--line-soft); border-radius: 14px; overflow: hidden; background: var(--glass-2); text-align: left; padding: 0; transition: all .15s; }
+  .card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 8px 22px rgba(0,0,0,.4); }
+  .card .cover { aspect-ratio: 16 / 9; display: grid; place-items: center; font: 700 1.3rem var(--font-head); color: rgba(255,255,255,.9); text-shadow: 0 2px 8px rgba(0,0,0,.5); }
+  .card .meta { padding: 8px 10px 10px; } .card b { display: block; font: 600 .86rem var(--font-head); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card span { font-size: .72rem; color: var(--muted); }
+
+  /* Full settings */
+  .settings { display: grid; grid-template-columns: 190px 1fr; gap: 16px; height: 100%; min-height: 0; }
+  .cats { display: grid; gap: 4px; align-content: start; }
+  .cats button { cursor: pointer; text-align: left; padding: 9px 12px; border-radius: 10px; border: 1px solid transparent; background: none; font: 500 .9rem var(--font-head); color: var(--muted); }
+  .cats button:hover { color: var(--text); background: rgba(255,255,255,.05); }
+  .cats button[aria-selected="true"] { color: var(--text); background: rgba(61,220,132,.14); border-color: var(--line); box-shadow: inset 3px 0 0 var(--accent); }
+  .rows { display: grid; gap: 2px; align-content: start; padding-right: 6px; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 11px 4px; border-bottom: 1px solid var(--line-soft); }
+  .row:last-child { border-bottom: 0; }
+  .row b { font: 500 .92rem var(--font-head); display: block; } .row small { color: var(--muted); font-size: .78rem; }
+  .row .val { font: 500 .82rem var(--font-mono); color: var(--accent); white-space: nowrap; }
+  .sw { width: 44px; height: 24px; border-radius: 999px; border: 1px solid var(--line-soft); background: rgba(255,255,255,.1); position: relative; cursor: pointer; flex: none; }
+  .sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--muted); transition: all .15s; }
+  .sw[aria-checked="true"] { background: rgba(61,220,132,.3); border-color: var(--accent); }
+  .sw[aria-checked="true"]::after { left: 23px; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+
+  /* Status strip under the panel */
+  .status { display: flex; align-items: center; gap: 18px; padding: 10px 20px; border-radius: 16px; background: rgba(4, 18, 15, .78);
+    border: 1px solid var(--line-soft); font: 500 .82rem var(--font-mono); color: var(--muted); }
+  .status .clock { font: 600 1.25rem var(--font-head); color: var(--text); line-height: 1; }
+  .status .date { font-size: .74rem; }
+  .status .sp { margin-left: auto; }
+  .status b { color: var(--text); font-weight: 500; }
+  .batt { display: inline-flex; align-items: center; gap: 6px; }
+  .batt i { width: 22px; height: 11px; border: 1.5px solid var(--muted); border-radius: 3px; position: relative; display: inline-block; }
+  .batt i::before { content: ""; position: absolute; inset: 1px auto 1px 1px; width: calc(var(--p) * 1% - 2px); background: var(--accent); border-radius: 1px; }
+  .batt i::after { content: ""; position: absolute; right: -4px; top: 2.5px; width: 2px; height: 4px; background: var(--muted); border-radius: 0 1px 1px 0; }
+  /* Mini-map of the five panels */
+  .map { display: grid; grid-template: repeat(3, 9px) / repeat(3, 9px); gap: 3px; }
+  .map i { border-radius: 2.5px; background: rgba(255,255,255,.16); }
+  .map i.on { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .map i.none { background: none; }
+  .where { color: var(--text); font-family: var(--font-head); }
+  .keys { text-align: center; font: 500 .74rem var(--font-head); color: var(--muted); }
+  .keys kbd { font: 500 .7rem var(--font-mono); color: var(--text); border: 1px solid var(--line-soft); border-radius: 6px; padding: 1px 6px; background: rgba(255,255,255,.05); }
+  .toast { position: fixed; left: 50%; bottom: 22px; translate: -50% 0; background: rgba(4,18,15,.94); border: 1px solid var(--line); color: var(--text);
+    padding: 9px 16px; border-radius: 12px; font: 500 .85rem var(--font-head); opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 20; }
+  .toast.show { opacity: 1; }
+
+  @media (max-width: 720px) {
+    .panel { padding: 18px 16px 14px; gap: 10px; }
+    .game, .desk, .settings { grid-template-columns: 1fr; } .art { min-height: 90px; } .desk-side { grid-auto-flow: column; }
+    .quick, .grid { grid-template-columns: repeat(2, 1fr); } .cats { grid-auto-flow: column; overflow-x: auto; }
+    .viewport { aspect-ratio: 3 / 4; } .dash { width: 100%; }
+    .status { flex-wrap: wrap; gap: 10px 14px; } .status .hide-s { display: none; } .keys { display: none; }
+    .slider { grid-template-columns: 70px 1fr 40px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .track.anim { transition: none; } .card:hover { transform: none; } }
+</style>
+</head>
+<body>
+<div class="room" aria-hidden="true"></div>
+
+<div class="top">
+  <a href="../#roadmap/2">← Goggles OS roadmap</a>
+  <span><b>GogglesXR dashboard</b> · five-panel prototype</span>
+  <span class="tag">Design prototype</span>
+</div>
+
+<main class="stage">
+  <div class="dash">
+    <div class="viewport" id="viewport" aria-roledescription="dashboard" aria-label="GogglesXR dashboard">
+      <button class="hint up" data-go="up" type="button"><i>▲</i><span></span></button>
+      <button class="hint down" data-go="down" type="button"><i>▼</i><span></span></button>
+      <button class="hint left" data-go="left" type="button"><i>▶</i><span></span></button>
+      <button class="hint right" data-go="right" type="button"><span></span><i>▶</i></button>
+
+      <div class="track" id="track">
+        <!-- CURRENT GAME (centre) -->
+        <section class="panel" data-panel="game" data-name="Current Game" style="--x:0;--y:0">
+          <header><h2>Now playing</h2><span class="eyebrow">Current game</span></header>
+          <div class="body game">
+            <div class="art"><span class="live">Running · 1 h 12 m</span><h3>Half-Life: Alyx</h3><span class="muted" style="color:#e6f3ee">SteamVR game · through GogglesXR</span></div>
+            <div class="game-side">
+              <div class="actions">
+                <button class="btn primary wide" type="button" data-say="Back to the game">Resume game</button>
+                <button class="btn" type="button" data-say="View recentred">Recentre</button>
+                <button class="btn" type="button" data-say="Screenshot saved to Pictures">Screenshot</button>
+                <button class="btn" type="button" data-say="Recording started">Record clip</button>
+                <button class="btn danger" type="button" data-say="Game closed. Back to Goggles Home">Quit game</button>
+              </div>
+              <div class="perf">
+                <div><b>90</b><span>FPS</span></div>
+                <div><b>8.4</b><span>ms frame</span></div>
+                <div><b>71%</b><span>GPU</span></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- QUICK SETTINGS (top) -->
+        <section class="panel" data-panel="quick" data-name="Quick Settings" style="--x:0;--y:-1">
+          <header><h2>Quick settings</h2><span class="eyebrow">Quick settings</span></header>
+          <div class="body" style="display:grid;gap:14px;align-content:space-between">
+            <div class="sliders">
+              <div class="slider"><label for="s-vol">Volume</label><input id="s-vol" type="range" value="65"><output>65%</output></div>
+              <div class="slider"><label for="s-bri">Brightness</label><input id="s-bri" type="range" value="80"><output>80%</output></div>
+              <div class="slider"><label for="s-res">Render scale</label><input id="s-res" type="range" min="50" max="150" value="100"><output>100%</output></div>
+            </div>
+            <div class="quick">
+              <button class="toggle" type="button" aria-pressed="false"><span class="lens"></span><b>Mic mute</b><span>Silence your mic</span></button>
+              <button class="toggle" type="button" aria-pressed="false"><span class="lens"></span><b>Passthrough</b><span>See your room</span></button>
+              <button class="toggle" type="button" aria-pressed="true"><span class="lens"></span><b>Boundary</b><span>Play-area walls</span></button>
+              <button class="toggle" type="button" aria-pressed="false"><span class="lens"></span><b>Do not disturb</b><span>Hide notifications</span></button>
+              <button class="toggle" type="button" aria-pressed="true"><span class="lens"></span><b>Smoothing</b><span>Fill dropped frames</span></button>
+              <button class="toggle" type="button" aria-pressed="false"><span class="lens"></span><b>Stats overlay</b><span>FPS in view</span></button>
+              <button class="toggle" type="button" aria-pressed="false"><span class="lens"></span><b>Night tint</b><span>Warmer colours</span></button>
+              <button class="toggle" type="button" data-say="View recentred"><span class="lens"></span><b>Recentre</b><span>Reset forward</span></button>
+            </div>
+          </div>
+        </section>
+
+        <!-- DESKTOP (bottom) -->
+        <section class="panel" data-panel="desktop" data-name="Desktop" style="--x:0;--y:1">
+          <header><h2>Desktop</h2><span class="eyebrow">Desktop</span></header>
+          <div class="body desk">
+            <div class="screen" aria-label="Desktop preview"><div class="win"></div><div class="bar"></div><div class="cursor"></div></div>
+            <div class="desk-side">
+              <div class="seg" role="group" aria-label="Monitor">
+                <button class="btn small" type="button" aria-pressed="true">Screen 1</button>
+                <button class="btn small" type="button" aria-pressed="false">Screen 2</button>
+              </div>
+              <button class="btn small" type="button" data-say="Keyboard opened">Keyboard</button>
+              <button class="btn small" type="button" data-say="Showing open windows">Windows</button>
+              <button class="btn small" type="button" data-say="Desktop pinned in the game world">Pin in world</button>
+              <p class="muted" style="font-size:.76rem;margin:4px 0 0">Laser = mouse. Trigger clicks, stick scrolls.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- LIBRARY (right) -->
+        <section class="panel" data-panel="library" data-name="Library" style="--x:1;--y:0">
+          <header><h2>Library</h2>
+            <div class="chips" id="lib-filter" role="group" aria-label="Filter">
+              <button type="button" aria-pressed="true" data-f="all">All</button>
+              <button type="button" aria-pressed="false" data-f="recent">Recent</button>
+              <button type="button" aria-pressed="false" data-f="steamvr">SteamVR</button>
+              <button type="button" aria-pressed="false" data-f="openxr">OpenXR</button>
+            </div>
+            <span class="eyebrow">Library</span></header>
+          <div class="body scroll"><div class="grid" id="lib"></div></div>
+        </section>
+
+        <!-- FULL SETTINGS (left) -->
+        <section class="panel" data-panel="settings" data-name="Settings" style="--x:-1;--y:0">
+          <header><h2>Settings</h2><span class="eyebrow">Full settings</span></header>
+          <div class="body settings">
+            <div class="cats" id="cats" role="tablist" aria-label="Settings sections"></div>
+            <div class="rows scroll" id="rows" role="tabpanel"></div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div class="status" aria-label="Status">
+      <div><div class="clock" id="clock">--:--</div><div class="date" id="date"></div></div>
+      <div class="map" id="map" aria-hidden="true"></div>
+      <span class="where" id="where">Current Game</span>
+      <span class="sp batt" title="Headset battery"><span class="hide-s">Headset</span> <i style="--p:82"></i><b>82%</b></span>
+      <span class="batt" title="Left controller">L <i style="--p:64"></i></span>
+      <span class="batt" title="Right controller">R <i style="--p:58"></i></span>
+      <span class="hide-s" title="Stream">Link <b>118 Mbps</b> · <b>34 ms</b></span>
+      <span title="Frame rate"><b>90</b> fps</span>
+    </div>
+    <div class="keys">In the headset: <kbd>Grip</kbd> + swipe changes panel · <kbd>Trigger</kbd> selects · <kbd>Stick</kbd> scrolls. Here: drag the panel, or use the <kbd>arrow keys</kbd>.</div>
+  </div>
+</main>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+  const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
+
+  // ---- The five panels sit on a cross with the current game in the middle
+  const POS = { game: [0, 0], quick: [0, -1], desktop: [0, 1], library: [1, 0], settings: [-1, 0] };
+  const NAME = { game: "Current Game", quick: "Quick Settings", desktop: "Desktop", library: "Library", settings: "Settings" };
+  const DIRS = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
+  const at = (x, y) => Object.keys(POS).find(k => POS[k][0] === x && POS[k][1] === y);
+  // The panel you reach by looking in a direction from the current one (only through the centre)
+  const neighbour = (from, dir) => { const [x, y] = POS[from], [dx, dy] = DIRS[dir]; return at(x + dx, y + dy); };
+
+  const viewport = $("#viewport"), track = $("#track");
+  let current = "game";
+
+  function show(id, announce) {
+    current = id;
+    const [x, y] = POS[id];
+    track.classList.add("anim");
+    track.style.setProperty("--px", x); track.style.setProperty("--py", y);
+    track.style.setProperty("--dx", "0px"); track.style.setProperty("--dy", "0px");
+    $$(".panel").forEach(p => p.toggleAttribute("inert", p.dataset.panel !== id));
+    for (const dir in DIRS) {
+      const n = neighbour(id, dir), h = $(`.hint.${dir}`);
+      h.hidden = !n; if (n) $("span", h).textContent = NAME[n];
+    }
+    $$("#map i").forEach(i => i.classList.toggle("on", i.dataset.p === id));
+    $("#where").textContent = NAME[id];
+    if (announce) history.replaceState(null, "", "#" + id);
+  }
+  // Looking "up" reveals the panel above: the same move as dragging the card downwards
+  function go(dir) { const n = neighbour(current, dir); if (n) show(n, true); return !!n; }
+
+  // mini-map
+  const map = $("#map");
+  for (let y = -1; y <= 1; y++) for (let x = -1; x <= 1; x++) {
+    const i = document.createElement("i"), id = at(x, y);
+    if (id) i.dataset.p = id; else i.className = "none";
+    map.appendChild(i);
+  }
+  $$(".hint").forEach(h => h.addEventListener("click", () => go(h.dataset.go)));
+  document.addEventListener("keydown", e => {
+    const dir = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" }[e.key];
+    if (!dir || e.target.matches("input")) return;
+    e.preventDefault(); go(dir);
+  });
+
+  // ---- Grab and swipe (mouse or touch drag stands in for grip + hand movement)
+  let drag = null, suppressClick = false;
+  viewport.addEventListener("pointerdown", e => {
+    if (e.button !== 0 || e.target.closest("input, .hint")) return;
+    drag = { x: e.clientX, y: e.clientY, axis: null, id: e.pointerId, t: performance.now() };
+  });
+  viewport.addEventListener("pointermove", e => {
+    if (!drag || e.pointerId !== drag.id) return;
+    let dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!drag.axis) {
+      if (Math.hypot(dx, dy) < 8) return;
+      drag.axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+      viewport.setPointerCapture(e.pointerId); viewport.classList.add("dragging"); track.classList.remove("anim");
+    }
+    // The card follows the hand along one axis. Pulling it right reveals what is on the left, and so on.
+    const dir = drag.axis === "x" ? (dx > 0 ? "left" : "right") : (dy > 0 ? "up" : "down");
+    const open = neighbour(current, dir);
+    let d = drag.axis === "x" ? dx : dy;
+    if (!open) d = Math.sign(d) * Math.min(46, Math.abs(d) * 0.22);     // nothing that way: resist
+    track.style.setProperty("--dx", drag.axis === "x" ? d + "px" : "0px");
+    track.style.setProperty("--dy", drag.axis === "y" ? d + "px" : "0px");
+    drag.dir = dir; drag.open = open; drag.d = d;
+  });
+  function endDrag(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    const dr = drag; drag = null;
+    viewport.classList.remove("dragging");
+    if (!dr.axis) return;
+    suppressClick = true; setTimeout(() => (suppressClick = false), 0);
+    const size = dr.axis === "x" ? viewport.clientWidth : viewport.clientHeight;
+    const fast = Math.abs(dr.d) / Math.max(1, performance.now() - dr.t) > 0.6;
+    if (dr.open && (Math.abs(dr.d) > size * 0.22 || (fast && Math.abs(dr.d) > 40))) show(dr.open, true);
+    else show(current, false);
+  }
+  // Dragging must never turn into text selection or a browser drag-and-drop
+  viewport.addEventListener("dragstart", e => e.preventDefault());
+  viewport.addEventListener("pointerup", endDrag);
+  viewport.addEventListener("pointercancel", endDrag);
+  viewport.addEventListener("click", e => { if (suppressClick) { e.stopPropagation(); e.preventDefault(); } }, true);
+
+  // ---- Panel contents
+  const toast = $("#toast"); let toastT;
+  function say(msg) { toast.textContent = msg; toast.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => toast.classList.remove("show"), 1800); }
+  document.addEventListener("click", e => {
+    const b = e.target.closest("[data-say]"); if (b) say(b.dataset.say);
+    const t = e.target.closest(".toggle[aria-pressed]"); if (t && !t.dataset.say) t.setAttribute("aria-pressed", String(t.getAttribute("aria-pressed") !== "true"));
+    const s = e.target.closest(".sw"); if (s) s.setAttribute("aria-checked", String(s.getAttribute("aria-checked") !== "true"));
+    const seg = e.target.closest(".seg button"); if (seg) $$(".seg button").forEach(x => x.setAttribute("aria-pressed", String(x === seg)));
+  });
+  $$("input[type=range]").forEach(r => {
+    const upd = () => { const lo = Number(r.min || 0), hi = Number(r.max || 100); r.style.setProperty("--v", ((r.value - lo) / (hi - lo) * 100) + "%"); r.nextElementSibling.textContent = r.value + "%"; };
+    r.addEventListener("input", upd); upd();
+  });
+
+  const GAMES = [
+    ["Half-Life: Alyx", "steamvr", 1, "#174d6b,#e9d36a"], ["Beat Saber", "steamvr", 1, "#b3123e,#1b2cc9"], ["VRChat", "steamvr", 1, "#1f2b5c,#19c3c0"],
+    ["Pavlov VR", "steamvr", 0, "#4a3b22,#c7a253"], ["Blade & Sorcery", "steamvr", 0, "#3b1d14,#d06b2e"], ["Into the Radius", "steamvr", 1, "#16302c,#7fae5a"],
+    ["Godot XR demo", "openxr", 0, "#27456e,#6fb2ff"], ["Goggles Home", "openxr", 0, "#0f3d36,#3ddc84"], ["The Lab", "steamvr", 0, "#2b2b2b,#f0a020"],
+    ["Bonelab", "steamvr", 0, "#101820,#f2c200"], ["Xonotic VR", "openxr", 0, "#3a1030,#e04fb0"], ["Google Earth VR", "steamvr", 0, "#0b2f5a,#3fa37b"],
+  ];
+  function renderLib(f) {
+    $("#lib").innerHTML = GAMES.filter(g => f === "all" || (f === "recent" ? g[2] : g[1] === f)).map(g =>
+      `<button class="card" type="button" data-say="Starting ${g[0]}"><div class="cover" style="background:linear-gradient(135deg,${g[3]})">${g[0].split(/[\s:]+/).map(w => w[0]).join("").slice(0, 3)}</div>
+       <div class="meta"><b>${g[0]}</b><span>${g[1] === "steamvr" ? "SteamVR" : "OpenXR"}${g[2] ? " · played recently" : ""}</span></div></button>`).join("");
+  }
+  $$("#lib-filter button").forEach(b => b.addEventListener("click", () => {
+    $$("#lib-filter button").forEach(x => x.setAttribute("aria-pressed", String(x === b))); renderLib(b.dataset.f);
+  }));
+  renderLib("all");
+
+  const SETTINGS = {
+    "Display": [["Refresh rate", "How often the headset redraws", "90 Hz"], ["Render scale", "Sharper image, more GPU load", "100%"], ["Motion smoothing", "Fills in dropped frames", true], ["Foveated encoding", "More detail where you look", true]],
+    "Streaming": [["Quality", "Picked for your headset and Wi-Fi", "Auto"], ["Bitrate", "Current video bitrate", "118 Mbps"], ["Codec", "Chosen for your GPU", "HEVC"], ["USB mode", "Use the cable instead of Wi-Fi", false]],
+    "Audio": [["Output", "Where game sound plays", "Headset"], ["Microphone", "Input device", "Headset mic"], ["Mirror to PC speakers", "Play sound on the desktop too", false]],
+    "Controllers": [["Tracking", "Both controllers connected", "OK"], ["Haptics", "Vibration strength", "80%"], ["Hand tracking", "Use your hands without controllers", false], ["Dashboard button", "Opens this dashboard", "Menu"]],
+    "Play area": [["Boundary", "Shows walls when you get close", true], ["Floor height", "Set by the headset", "0.00 m"], ["Set up play area", "Redraw your boundary", "Start"]],
+    "Appearance": [["Dashboard look", "Matches Goggles OS", "Glass"], ["Dashboard distance", "How far it floats from you", "1.4 m"], ["Dashboard size", "Panel width", "Large"], ["Follow my head", "Panel turns with you", false]],
+    "System": [["GogglesXR", "Runtime version", "0.1 (prototype)"], ["Updates", "Through Goggles Update", "Up to date"], ["SteamVR games", "OpenVR translated to OpenXR", "Enabled"], ["About", "Goggles OS 26.04", "Open"]],
+  };
+  const cats = $("#cats"), rows = $("#rows");
+  function showCat(name) {
+    $$("button", cats).forEach(b => b.setAttribute("aria-selected", String(b.textContent === name)));
+    rows.innerHTML = SETTINGS[name].map(([t, d, v]) => `<div class="row"><div><b>${t}</b><small>${d}</small></div>${
+      typeof v === "boolean" ? `<button class="sw" type="button" role="switch" aria-checked="${v}" aria-label="${t}"></button>` : `<span class="val">${v}</span>`}</div>`).join("");
+    rows.scrollTop = 0;
+  }
+  Object.keys(SETTINGS).forEach(n => { const b = document.createElement("button"); b.type = "button"; b.setAttribute("role", "tab"); b.textContent = n; b.addEventListener("click", () => showCat(n)); cats.appendChild(b); });
+  showCat("Display");
+
+  // ---- Clock
+  function tick() {
+    const n = new Date();
+    $("#clock").textContent = n.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    $("#date").textContent = n.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+  }
+  tick(); setInterval(tick, 10000);
+
+  show(POS[location.hash.slice(1)] ? location.hash.slice(1) : "game", false);
+  track.classList.remove("anim");
+</script>
+</body>
+</html>

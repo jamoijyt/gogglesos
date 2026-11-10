@@ -29,104 +29,143 @@ Status key: ✅ done · 🔨 in progress · 📋 planned · ⚠️ limited / nee
 
 ## Target headsets
 
-The headsets used for testing. Each one has a supported route into SteamVR, so Goggles Home and games behave the same on all of them.
+The headsets used for testing, and how each one reaches games.
 
-| Headset | Route into SteamVR | Phase | Status |
+| Headset | Route | Phase | Status |
 |---|---|---|---|
-| HTC Vive (Vive wands, Index controllers) | Native SteamVR Lighthouse driver; udev rules from `steam-devices` | 0–1 | ✅ expected to work, needs a test pass on Goggles OS |
-| Steam Frame | Valve's **Steam Link** over local Wi-Fi (main route). The Steam Frame wireless adapter is optional; its Linux setup is still unreliable | 1 | ❓ verify Steam Link streaming to the Frame works out of the box on Goggles OS; the adapter is a later extra |
-| Meta Quest 3 | **Goggles Link** | 3 | 📋 |
-| Meta Quest 2 | **Goggles Link** | 3 | 📋 |
-| Oculus Quest 1 | **Goggles Link** (lower-resolution profile) | 3 | 📋 Meta has ended Quest 1 updates, so the client must stay on toolchain/OpenXR versions that still run on it |
-| Oculus Rift CV1 | Monado + its SteamVR driver plugin | 4 | 📋 ❓ |
+| HTC Vive (Vive wands, Index controllers) | SteamVR's own Lighthouse driver; udev rules from `steam-devices` | 0–1 | ✅ expected to work, needs a test pass on Goggles OS |
+| Meta Quest 3 | **GogglesXR** streaming (Goggles Link) | 2 | 📋 |
+| Meta Quest 2 | **GogglesXR** streaming (Goggles Link) | 2 | 📋 |
+| Oculus Quest 1 | **GogglesXR** streaming, lower-resolution profile | 2 | 📋 Meta has ended Quest 1 updates, so the headset app must stay on toolchain/OpenXR versions that still run on it |
+| Steam Frame | Valve's Steam Link today; **GogglesXR** if a client can be installed on it | 2 | ⚠️ Steam Link VR currently crashes on GTX 10-series cards with the NVIDIA 580 driver (see below) |
+| Oculus Rift CV1 | Monado driver, through GogglesXR | 4 | 📋 ❓ |
+
+> [!WARNING]
+> **Steam Link VR is broken upstream on GTX 10-series cards.** On the test PC (GTX 1080, NVIDIA 580.178.04), SteamVR's compositor crashes as soon as a Quest or Steam Frame connects through Steam Link. Other GTX 1060/1070/1080 owners report the same on other distros: [SteamVR-for-Linux #1005](https://github.com/ValveSoftware/SteamVR-for-Linux/issues/1005), [#1017](https://github.com/ValveSoftware/SteamVR-for-Linux/issues/1017). There is no fix yet. This is the main reason GogglesXR is its own runtime and does not go through SteamVR.
 
 ---
 
-## Phase 2 — Goggles Home (custom VR shell) 📋
+## Phase 2 — GogglesXR (Goggles OS's own VR runtime) 📋
 
-**Goal:** a Goggles home space you land in when the headset starts. Launching a game hands over to it; quitting the game brings you back to Goggles Home.
+**Goal:** Goggles OS has its own OpenXR runtime, **GogglesXR**. It streams to standalone headsets, runs SteamVR games, and has its own dashboard and (later) home space. It does not depend on SteamVR's compositor.
 
-**Feasibility: yes, with one limit.**
-- You **can** replace the *SteamVR Home environment* (SteamVR lets you disable its Home and run your own scene app). You can also add your own in-VR menu as a dashboard overlay.
-- You **can't** fully remove *SteamVR's own system dashboard* (the system/menu button). It's part of SteamVR's compositor. Goggles Home sits alongside it, the same way OVR Toolkit and XSOverlay do.
+**Feasibility: yes, but it is the biggest item on the roadmap**: many months of work for one person. The plan below keeps it realistic by building on existing open-source pieces.
 
-**How it works**
+### Hard requirements
+
+1. **SteamVR games must work.** If WiVRn can run them, so can GogglesXR.
+2. **Its own dashboard**, in the Goggles Glass style (below). WiVRn has none of its own.
+3. **Its own home application** to launch games from. Later: the dashboard comes first.
+4. **Simple.** Preinstalled, nothing to set up on the PC, pair the headset once.
+
+### How it fits together
 
 ```
-goggles-vr-session (supervisor service)
-  ├─ starts SteamVR with SteamVR Home disabled
-  ├─ launches Goggles Home (OpenXR scene app)
-  ├─ user picks a game → steam://rungameid/<id> → SteamVR switches scene app
-  └─ watches the scene app; when the game exits → relaunches Goggles Home
+ SteamVR (OpenVR) game ──► OpenVR-to-OpenXR translation ─┐
+ OpenXR game ────────────────────────────────────────────┤
+ Goggles dashboard / Goggles Home (OpenXR apps) ─────────┤
+                                                         ▼
+                                    GogglesXR runtime (compositor, tracking)
+                                                         │
+                             video encode ──► network ──► headset app (Quest)
+                             ◄── poses, controller input ◄──
 ```
 
-- **Library:** read installed games straight from Steam's `appmanifest_*.acf` files and cached artwork. No Steam API key is needed.
-- **Engine: Godot 4 (decided).** It has native Linux OpenXR support and is free. Unity's OpenXR plugin doesn't officially support Linux standalone builds.
-- **Milestones:**
-  1. OpenXR "hello room" running under SteamVR on Goggles OS
-  2. Game grid from local Steam library + launch
-  3. Supervisor: return-to-home after a game exits
-  4. Overlay menu (volume, Wi-Fi, recentre, quit to desktop)
-  5. Environments and themes (match Glass/Lite)
-
-## Phase 3 — Goggles Link (Quest streaming) 📋
-
-**Goal:** the simplest way to play PCVR on Linux. Goggles Link streams SteamVR to Quest 1, 2 and 3 over Wi-Fi (and USB). It's preinstalled on Goggles OS, needs nothing set up on the PC, and just works when you put the headset on. It's a **new app built for Goggles OS**, not a rebrand of ALVR or WiVRn.
-
-**Feasibility: yes, but it's the biggest item**: months of work for one person.
-
-### Why build it
-
-ALVR and WiVRn are impressive open-source projects, and plenty of people use them happily. **What follows is my own personal experience** on my own PC, headsets and network, not a verdict on either project. Results depend a lot on hardware and setup.
-
-For me, the problem has been the **software and the experience**, not the network:
-
-- **ALVR** works for me on Windows over the same Wi-Fi, but I find it clunky and hard to set up. On Linux I've never got it working.
-- **WiVRn** has been fragile for me. It has broken itself during install or after small changes.
-
-Since ALVR works for me on Windows over the same extender, my network is fine. Whatever stopped it on Linux for me is probably on the Linux side: driver registration, firewall, encoder libraries, packaging. Goggles OS controls all of those, so Goggles Link can get them right by default on Goggles OS.
-
-**The bar to meet:** Air Link, and Steam Link on the Steam Frame. Put the headset on, pick the PC, play.
+| Piece | Plan |
+|---|---|
+| Runtime core | Build on **Monado**, the open-source OpenXR runtime (Boost licence). It already provides the OpenXR API, compositor and driver framework. WiVRn is built the same way. Writing a runtime from nothing would add years |
+| SteamVR games | An **OpenVR-to-OpenXR translation layer** (xrizer or OpenComposite), the same approach WiVRn uses. Goggles OS registers it as the system's OpenVR runtime, and exposes the runtime inside Steam's game containers, so games launched from Steam find it without any setup |
+| Streaming ("Goggles Link") | GogglesXR's streaming part: video encode on the PC (NVENC on NVIDIA, VAAPI on AMD), UDP transport with error correction and adaptive bitrate, and a headset app that decodes, sends poses and reprojects. WiVRn (GPL-3.0, compatible with this repo) and ALVR (MIT) are references and possible code sources |
+| Headset app | Native Android app for Quest 1/2/3 (OpenXR, hardware decode). Installed from the PC over USB with one button; pairing happens in the same step |
+| Dashboard | An overlay drawn by the runtime on top of the running game. Design below |
+| Goggles Home | The space you land in when no game is running. Godot 4 (OpenXR app). After the dashboard |
+| PC app | Small Qt/KDE app: status, *Install to headset*, connection check, quality |
 
 ### Experience rules
 
-1. **Nothing to install or set up on the PC.** Goggles Link ships with Goggles OS: SteamVR driver pre-registered, encoder libraries present, firewall rules in place.
-2. **Headset app installed from the PC.** Plug the Quest in once and press *Install to headset* (sideloading over USB, developer mode). No separate download or command line.
-3. **Pair once, then automatic.** Pairing happens during that same USB step (or by QR code/PIN). After that the headset finds the PC and connects on its own.
-4. **One simple screen.** Status, a single quality setting, and a connect button. Bitrate, codec and resolution are picked automatically per headset; advanced settings stay hidden.
-5. **Can't break itself.** Goggles Link checks its own setup on start (driver registered, PC and headset versions match) and repairs it. PC and headset apps update together.
-6. **Errors in plain words**, with the fix. A built-in connection check covers the network side (Wi-Fi speed, packet loss, firewall).
-7. **USB mode** as a fallback that always works.
-8. **Per-headset profiles**, picked automatically: Quest 1 (Snapdragon 835, lower resolution and bitrate), Quest 2, Quest 3.
+1. **Nothing to install or set up on the PC.** GogglesXR ships with Goggles OS: runtime registered for OpenXR and OpenVR, encoder libraries present, firewall rules in place.
+2. **Headset app installed from the PC.** Plug the Quest in once and press *Install to headset*.
+3. **Pair once, then automatic.** After that the headset finds the PC and connects on its own.
+4. **Can't break itself.** GogglesXR checks its own setup on start and repairs it. PC and headset apps update together through Goggles Update.
+5. **Errors in plain words**, with the fix. USB mode as a fallback.
+6. **Per-headset profiles**, picked automatically.
 
-### Pieces
+### Dashboard design: five panels
 
-| Piece | Where | Tech |
-|---|---|---|
-| PC app | Goggles OS | Simple Qt/KDE app: status, quality, *Install to headset*, connection check. Tray icon |
-| Headset client | Quest (Android) | Native C++: OpenXR, MediaCodec hardware decode, pose sending, timewarp. Sideloaded from the PC app |
-| PC driver | SteamVR | OpenVR driver API: exposes a virtual HMD and controllers to SteamVR |
-| Encoder | PC | NVENC (NVIDIA; GTX 1080 does H.264/HEVC, no AV1) / VAAPI (AMD) via FFmpeg |
-| Transport | both | UDP, forward error correction, adaptive bitrate, clock sync |
-| Pairing | both | USB or QR/PIN pairing; the headset remembers the PC and reconnects directly |
-| Latency | both | Pose prediction + headset-side timewarp |
+Pressing the dashboard button brings up one glass panel in front of you, with a status strip under it. There are five panels, laid out like a plus sign with the current game in the middle:
 
-### Network baseline
+```
+                 ┌────────────────┐
+                 │ Quick Settings │
+┌───────────────┬┴────────────────┴┬───────────────┐
+│ Full Settings │   Current Game   │    Library    │
+└───────────────┴┬────────────────┬┴───────────────┘
+                 │    Desktop     │
+                 └────────────────┘
+```
 
-Design for the **current setup**: a TP-Link RE200 (AC750) extender on 5 GHz Wi-Fi 5 (single stream, 433 Mbps link rate, usually about 200 Mbps of real throughput) in the same room, PC wired to it. It already handles VR streaming on Windows. Plan on about 100–150 Mbps of video bitrate, with a latency target under 50 ms motion-to-photon. Wi-Fi 6/6E is a bonus, not a requirement. Quest 1 and Quest 2 can't use 6 GHz anyway; Quest 3 can.
+- **Moving between panels:** hold **grip** and swipe the panel like a card. The card follows your hand, so sliding it down reveals the panel above, and sliding it left reveals the panel on the right. Every move goes through the centre. Example, Desktop to Library: slide top to bottom (Current Game appears), then slide right to left (Library appears).
+- **Using a panel:** like any dashboard. Point with the laser, click with the trigger, scroll with the stick or trackpad.
+- **Finding your way:** small labels on the panel's edges name the panel in each direction, and a five-dot map in the status strip shows where you are.
+- **Status strip (under the panel):** time and date, the panel map, headset and controller batteries, stream bitrate and latency, frame rate.
+- **Look:** Goggles Glass. Translucent dark panel, the visor line along the top, green accent, lens-style toggles.
 
-The Steam Frame wireless adapter is not part of the plan: its Linux setup is still unreliable, and the Frame streams fine over normal Wi-Fi with Steam Link anyway.
+| Panel | Contents |
+|---|---|
+| **Current Game** (centre) | Game art and name, time running, Resume, Recentre, Screenshot, Record clip, Quit game, and live FPS / frame time / GPU load |
+| **Quick Settings** (top) | Volume, brightness and render-scale sliders; toggles for mic mute, passthrough, boundary, do not disturb, motion smoothing, stats overlay, night tint; recentre |
+| **Desktop** (bottom) | Live view of the PC desktop with the laser as the mouse; screen picker, keyboard, window list, pin a window in the game world |
+| **Library** (right) | Grid of installed games (SteamVR and OpenXR) with filters; select one to launch it |
+| **Full Settings** (left) | Sections: Display, Streaming, Audio, Controllers, Play area, Appearance, System |
+
+**Try it:** an interactive prototype of the panels and the swipe navigation is on the website at [`/dashboard/`](https://jamoijyt.github.io/gogglesos/dashboard/) (source: `docs/dashboard/index.html`). Drag the panel with the mouse in place of grip + swipe.
 
 ### Milestones
 
-1. USB mode: video + tracking working over the cable on Quest 2/3 with a bare-bones client.
-2. Wi-Fi streaming with pairing and automatic reconnect.
-3. The PC app: *Install to headset*, status screen, single quality setting.
-4. Self-check and repair; PC and headset versions kept in step.
-5. Adaptive bitrate, FEC, per-headset profiles (including Quest 1).
-6. Hand off to Goggles Home so the Quest lands straight in the shell.
+1. ✅ **Proof on the test PC.** Done on 10 November 2026: WiVRn (Monado) streamed a VR game to a Quest on the GTX 1080 with head tracking and a stable frame rate, with no sign of the crash that hits Steam Link. See "What the proof showed" below.
+2. 🔨 **SteamVR game through translation.** The translation layer (xrizer) loads under Proton and opens a session on the test PC. Still to do: confirm controllers and input with a game whose controls work, and test one well-known SteamVR title.
+3. **GogglesXR skeleton.** A Monado-based runtime packaged for Goggles OS, registered automatically, with USB streaming to a bare-bones headset app.
+4. **Dashboard v1.** The five-panel overlay in the headset: panel swiping, laser input, status strip, Current Game and Quick Settings working for real. Desktop, Library and Full Settings follow.
+5. **Wi-Fi streaming** with pairing and automatic reconnect; the PC app with *Install to headset*.
+6. **Per-headset profiles, adaptive bitrate, self-check and repair.**
+7. **Goggles Home.**
 
-ALVR's code (MIT licence) can still be reused piece by piece (for example the SteamVR driver or encoder setup) where it saves time, but the product, setup flow and UX are Goggles Link's own.
+### What the proof showed
+
+Test on 10 November 2026: GTX 1080, NVIDIA 580.178.04, Quest connected through WiVRn (Flatpak) with the regular `.deb` Steam.
+
+- **Result:** a VR game (Tricky Taggers, a non-Steam game added to Steam) ran in the headset with full head tracking and a stable frame rate. Controllers were not tested, because that build of the game has broken controller support.
+- **It took three manual steps**, which GogglesXR must do automatically:
+  1. **Put the translation layer first in the OpenVR paths file** (`~/.config/openvr/openvrpaths.vrpath`). SteamVR was listed first, so games went to SteamVR.
+  2. **Add launch options to every game** so Steam's game container can see the runtime: `PRESSURE_VESSEL_IMPORT_OPENXR_1_RUNTIMES=1` and `PRESSURE_VESSEL_FILESYSTEMS_RW=<runtime path>`.
+  3. **Keep SteamVR from running**, since it can put itself back on top of that file.
+- **Not every game can work.** Games that only ship the Oculus interface (`OVRPlugin.dll` and nothing else) never ask for VR through SteamVR or OpenXR, so they stay flat on any Linux runtime. The Library panel should mark these.
+- **Desktop Chrome is not a test.** WebXR found no headset in Chrome on Linux even with the runtime working.
+
+### Network baseline
+
+Design for the **current setup**: a TP-Link RE200 (AC750) extender on 5 GHz Wi-Fi 5 (single stream, 433 Mbps link rate, usually about 200 Mbps of real throughput) in the same room, PC wired to it. It already handles VR streaming on Windows. Plan on about 100–150 Mbps of video bitrate, with a latency target under 50 ms motion-to-photon. Wi-Fi 6/6E is a bonus, not a requirement.
+
+### Why not ALVR or WiVRn as they are
+
+ALVR and WiVRn are impressive open-source projects, and plenty of people use them happily. **What follows is my own personal experience** on my own PC, headsets and network, not a verdict on either project. Results depend a lot on hardware and setup.
+
+- **ALVR** works for me on Windows over the same Wi-Fi, but I find it clunky and hard to set up. On Linux I've never got it working. It is also a SteamVR driver, so it goes through the compositor that currently crashes on my card.
+- **WiVRn** has been fragile for me. It has broken itself during install or after small changes. It has no dashboard or home of its own.
+
+GogglesXR's aim is the same technology with the setup, updates and interface handled by the OS.
+
+## Phase 3 — Goggles Home 📋
+
+**Goal:** a Goggles home space you land in when the headset connects and no game is running. Launching a game hands over to it; quitting brings you back.
+
+- An OpenXR app running on GogglesXR, built with **Godot 4** (native Linux OpenXR support).
+- **Library:** reads installed games straight from Steam's `appmanifest_*.acf` files and cached artwork. No Steam API key is needed. Shares this code with the dashboard's Library panel.
+- **Milestones:**
+  1. OpenXR "hello room" running on GogglesXR
+  2. Game grid and launch (reusing the dashboard's library)
+  3. Return to home after a game exits
+  4. Environments and themes (match Glass/Lite)
 
 ## Phase 4 — Legacy headsets: Oculus Rift CV1 📋 ❓
 
@@ -136,7 +175,7 @@ A CV1 is available for testing.
 
 - **OpenHMD / Monado** drive the CV1 display and IMU. Rotation-only (3DoF) is the dependable part.
 - **Full 6DoF** (constellation camera tracking + Touch controllers) relies on Jan Schmidt's reverse-engineering work. **Its current maturity needs checking** before committing.
-- **Route into SteamVR:** Monado's SteamVR driver plugin exposes Monado devices to SteamVR, so CV1 games and Goggles Home use the same path as every other headset.
+- **Route into games:** GogglesXR is built on Monado, so a CV1 driven by Monado's driver would use the same runtime, dashboard and SteamVR-game translation as every other headset.
 - **Display:** the kernel already treats the CV1 as a "non-desktop" HMD, so DRM leasing works.
 
 ## Phase 5 — Everyday apps 📋
@@ -150,7 +189,7 @@ A CV1 is available for testing.
 ## Phase 6 — Distro infrastructure 📋
 
 - 🔨 **Goggles Update** (`goggles-update`): installed systems get Goggles OS changes from GitHub without a new ISO. Runs the same configuration step as the build (`chroot/apply-system.sh`); `stable` (releases) and `main` channels; daily check with a popup; rollback. Needs a first test on real hardware
-- **Package Goggles tools as .debs in a Goggles PPA** (theme, VR setup, Home, Link), once they're larger apps. Goggles Update covers the desktop setup and small tools until then
+- **Package Goggles tools as .debs in a Goggles PPA** (theme, VR setup, GogglesXR, Home), once they're larger apps. Goggles Update covers the desktop setup and small tools until then
 - Separate ISOs: `nvidia` (580, GTX 900–RTX 40), `nvidia-open` (RTX 50), `amd` (smaller)
 - Automated builds (GitHub Actions or a build box) + Hyper-V smoke test
 - ✅ Website and download page (GitHub Pages, `docs/`); `DISTRO_URL` in `config.sh` points to it
@@ -162,11 +201,15 @@ A CV1 is available for testing.
 | Question | Answer |
 |---|---|
 | Test headsets | Rift CV1, HTC Vive (Vive wands + Index controllers), Quest 1, Quest 2, Quest 3, Steam Frame |
-| ALVR / WiVRn | From my own experience only: ALVR works for me on Windows but I find it clunky and hard to set up, and I've never got it working on Linux. WiVRn has broken itself for me during install or after small changes. For me the problem is the software and experience, not the network. Build **Goggles Link** as a simpler Linux PCVR streamer, Goggles OS's own app |
+| ALVR / WiVRn | From my own experience only: ALVR works for me on Windows but I find it clunky and hard to set up, and I've never got it working on Linux. WiVRn has broken itself for me during install or after small changes. For me the problem is the software and experience, not the network. Streaming becomes part of **GogglesXR**, Goggles OS's own runtime |
+| VR runtime | Goggles OS has its own OpenXR runtime, **GogglesXR**, built on Monado. It must run SteamVR games (OpenVR-to-OpenXR translation, as WiVRn does) |
+| Dashboard | Five panels on a plus-shaped layout (Current Game in the centre; Quick Settings above, Desktop below, Library right, Full Settings left), moved by grip + swipe. Dashboard first, Goggles Home later |
 | Goggles Home engine | Godot 4 |
 | Wi-Fi | TP-Link RE200 (AC750) extender on 5 GHz in the play room, PC wired to it by Ethernet. Works fine for VR streaming, including ALVR on Windows |
 | Steam Frame | Streams with Steam Link over the same local Wi-Fi. The wireless adapter works but its Linux setup is unreliable, so it's optional |
 
 ## Open questions
 
-None right now.
+1. Do controllers and input work through the translation layer on the test PC? (Head tracking and video are confirmed.)
+2. Can a third-party streaming client be installed on the Steam Frame?
+3. What draws the dashboard: a Godot app shown as an overlay layer, or a 2D UI rendered to a texture by the runtime? To decide at dashboard milestone 4.

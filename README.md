@@ -40,7 +40,7 @@ ISO that keeps Kubuntu's Secure Boot chain, live session and Calamares installer
 
 > [!WARNING]
 > **Early development.** Test in a VM before installing on real hardware.
-> See [ROADMAP.md](ROADMAP.md) for what's planned (VR home shell, Quest streaming, Rift CV1).
+> See [ROADMAP.md](ROADMAP.md) for what's planned (GogglesXR, its own VR runtime with Quest streaming and a dashboard; Goggles Home; Rift CV1).
 
 ## What's inside
 
