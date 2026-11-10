@@ -372,6 +372,17 @@ sed -i "/^\[KSplash\]/,/^\[/ s#^Theme=.*#Theme=org.$DISTRO_ID.desktop#" "$LNF/co
 kwriteconfig6 --file /etc/xdg/ksplashrc --group KSplash --key Theme "org.$DISTRO_ID.desktop" || warn "could not select the Goggles splash"
 kwriteconfig6 --file /etc/xdg/ksplashrc --group KSplash --key Engine KSplashQML || true
 
+log "GogglesXR dashboard"
+# The Godot project (gogglesxr/dashboard). Run with: gogglesxr dashboard
+XR_DASH=/usr/share/$DISTRO_ID/gogglesxr-dashboard
+if [ -f "$G/gogglesxr/dashboard/project.godot" ]; then
+  rm -rf "${XR_DASH:?}"; mkdir -p "$XR_DASH"
+  install -m644 "$G"/gogglesxr/dashboard/project.godot "$G"/gogglesxr/dashboard/*.tscn "$G"/gogglesxr/dashboard/*.gd \
+    "$G"/gogglesxr/dashboard/*.tres "$G"/gogglesxr/dashboard/*.uid "$XR_DASH/"
+else
+  warn "GogglesXR dashboard sources missing"
+fi
+
 log "Desktop widget: Goggles HUD"
 # CPU / RAM / GPU / network readouts (chroot/hud-plasmoid). Shown with goggles-hud or Add Widgets
 HUD_DIR=/usr/share/plasma/plasmoids/org.$DISTRO_ID.hud
