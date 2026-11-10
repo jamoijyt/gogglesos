@@ -2,6 +2,9 @@
 # Generate all branding images from branding/source into $1 (output dir).
 # Needs ImageMagick (convert) with webp support.
 set -euo pipefail
+# Fixed timestamps inside the PNGs: the same artwork always gives the same files, so Goggles
+# Update can tell when the boot splash really changed (and skip regenerating the initramfs)
+export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1700000000}"
 SRC="$(cd "$(dirname "$0")/source" && pwd)"
 OUT="$1"
 mkdir -p "$OUT/icons"

@@ -149,7 +149,8 @@ A CV1 is available for testing.
 
 ## Phase 6 — Distro infrastructure 📋
 
-- **Package Goggles tools as .debs in a Goggles PPA** (theme, VR setup, Home, Link). Installed systems then get updates through normal system updates, instead of only from new ISOs
+- 🔨 **Goggles Update** (`goggles-update`): installed systems get Goggles OS changes from GitHub without a new ISO. Runs the same configuration step as the build (`chroot/apply-system.sh`); `stable` (releases) and `main` channels; daily check with a popup; rollback. Needs a first test on real hardware
+- **Package Goggles tools as .debs in a Goggles PPA** (theme, VR setup, Home, Link), once they're larger apps. Goggles Update covers the desktop setup and small tools until then
 - Separate ISOs: `nvidia` (580, GTX 900–RTX 40), `nvidia-open` (RTX 50), `amd` (smaller)
 - Automated builds (GitHub Actions or a build box) + Hyper-V smoke test
 - ✅ Website and download page (GitHub Pages, `docs/`); `DISTRO_URL` in `config.sh` points to it

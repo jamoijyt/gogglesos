@@ -2,7 +2,10 @@
 # Goggles OS appearance switcher.
 #   goggles-theme glass            apply Glass (blur + translucency) for the current user
 #   goggles-theme lite             apply Lite (opaque, no blur) for the current user
-#   goggles-theme glass --system   set the default for new users (run as root; used by the installer)
+#   goggles-theme glass --system   set the default for new users and restyle existing ones
+#                                  (run as root; used by the installer)
+#   goggles-theme glass --defaults set the default for new users only (run as root; used by
+#                                  Goggles Update, so users' own choices are kept)
 #   goggles-theme                  ask with a dialog
 # Both modes keep rounded corners, the dark theme, the green accent and animations.
 set -u
@@ -17,7 +20,7 @@ if [ -z "$MODE" ]; then
     glass "Glass - blur, translucency and smooth animations (default)" on \
     lite  "Lite - opaque windows, no blur (faster on older GPUs)" off) || exit 0
 fi
-case "$MODE" in glass|lite) ;; *) echo "usage: goggles-theme glass|lite [--system]" >&2; exit 2;; esac
+case "$MODE" in glass|lite) ;; *) echo "usage: goggles-theme glass|lite [--system|--defaults]" >&2; exit 2;; esac
 
 if [ "$MODE" = glass ]; then
   STYLE=kvantum; BLUR=true; ANIM=0.85; PANEL=translucent
@@ -69,19 +72,21 @@ apply() {  # $1 = config dir (e.g. /etc/xdg or ~/.config)
   fi
 }
 
-if [ "$SCOPE" = --system ]; then
-  [ "$(id -u)" -eq 0 ] || { echo "--system needs root" >&2; exit 1; }
+if [ "$SCOPE" = --system ] || [ "$SCOPE" = --defaults ]; then
+  [ "$(id -u)" -eq 0 ] || { echo "$SCOPE needs root" >&2; exit 1; }
   apply /etc/xdg
   apply /etc/skel/.config      # Kvantum and some apps only read the user's own config
   apply /root/.config          # root-run apps (the installer, pkexec dialogs)
   # Plasma layers the look-and-feel defaults above /etc/xdg, so set the widget style there too
   [ -f "$LNF_DEFAULTS" ] && sed -i "s/^widgetStyle=.*/widgetStyle=$STYLE/" "$LNF_DEFAULTS"
-  # The installer creates the user before this runs, so restyle existing accounts too
-  while IFS=: read -r user _ uid gid _ home _; do
-    [ "$uid" -ge 1000 ] && [ "$uid" -lt 60000 ] && [ -d "$home" ] || continue
-    apply "$home/.config"
-    chown -R "$uid:$gid" "$home/.config"
-  done < /etc/passwd
+  if [ "$SCOPE" = --system ]; then
+    # The installer creates the user before this runs, so restyle existing accounts too
+    while IFS=: read -r user _ uid gid _ home _; do
+      [ "$uid" -ge 1000 ] && [ "$uid" -lt 60000 ] && [ -d "$home" ] || continue
+      apply "$home/.config"
+      chown -R "$uid:$gid" "$home/.config"
+    done < /etc/passwd
+  fi
   echo "Goggles OS default appearance: $MODE"
   exit 0
 fi

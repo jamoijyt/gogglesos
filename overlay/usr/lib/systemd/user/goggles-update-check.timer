@@ -1,0 +1,10 @@
+[Unit]
+Description=Check for Goggles OS updates once a day
+
+[Timer]
+OnStartupSec=10min
+OnUnitActiveSec=1d
+RandomizedDelaySec=15min
+
+[Install]
+WantedBy=timers.target

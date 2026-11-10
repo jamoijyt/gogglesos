@@ -8,6 +8,14 @@ DISTRO_URL="https://jamoijyt.github.io/gogglesos/"          # website (GitHub Pa
 DISTRO_BUG_URL="https://github.com/jamoijyt/gogglesos/issues" # bug reports and support
 ISO_VOLID="GogglesOS 26.04"        # max 32 chars
 
+# Goggles Update (goggles-update): where installed systems get Goggles OS changes from.
+#   stable : the latest GitHub release of UPDATE_REPO
+#   main   : every commit on UPDATE_BRANCH (for testing; change per machine with
+#            sudo goggles-update --channel main)
+UPDATE_REPO="jamoijyt/gogglesos"
+UPDATE_CHANNEL="stable"
+UPDATE_BRANCH="main"
+
 # Base: official Kubuntu LTS ISO (Plasma + Calamares + signed boot chain)
 BASE_ISO_URL="https://cdimage.ubuntu.com/kubuntu/releases/26.04/release/kubuntu-26.04.1-desktop-amd64.iso"
 BASE_ISO_SHA256="831e4d4bb85098339ba43d3502cd6619b27e76daf37246a084cd68a6413090b8"

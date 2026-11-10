@@ -471,6 +471,7 @@
           <li>Keeps Kubuntu's Secure Boot chain</li>
           <li>The build pins third-party tools by checksum and fails if file ownership or permissions are unsafe</li>
           <li>VMware guest tools included (screen resize, clipboard)</li>
+          <li><b>Goggles Update</b> brings new Goggles OS changes without reinstalling</li>
         </ul>
       </div>
     </div>
@@ -965,7 +966,8 @@ sudo apt install xorriso squashfs-tools imagemagick webp</pre></div>
       goal: "Updates for installed systems, more ISO variants and automated builds.",
       items: [
         ["done", "Website and download page", "This site, on GitHub Pages"],
-        ["plan", "Goggles tools as packages", "Theme, VR setup, Home and Link in a Goggles PPA, so installed systems get them through normal updates"],
+        ["wip", "Goggles Update", "Installed systems get Goggles OS changes from GitHub without a new ISO, with a daily check and rollback"],
+        ["plan", "Goggles tools as packages", "Home and Link as packages in a Goggles PPA once they're larger apps"],
         ["plan", "Separate ISOs", "nvidia (GTX 900 to RTX 40), nvidia-open (RTX 50) and amd (smaller)"],
         ["plan", "Automated builds", "GitHub Actions or a build box, plus a Hyper-V smoke test"],
       ] },
