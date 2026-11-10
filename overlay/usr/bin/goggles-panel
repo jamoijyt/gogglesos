@@ -1,0 +1,29 @@
+#!/bin/bash
+# Goggles OS taskbar layout for the current user.
+#   goggles-panel visor   floating bar that hugs its icons, centred (default for new users)
+#   goggles-panel wide    floating bar across the whole screen
+#   goggles-panel         ask with a dialog
+# Only the bar's length and position change; your pinned apps and widgets stay as they are.
+set -u
+MODE="${1:-}"
+if [ -z "$MODE" ]; then
+  MODE=$(kdialog --title "Goggles Taskbar" --radiolist "Choose the taskbar layout:" \
+    visor "Visor - a centred bar that hugs its icons" on \
+    wide  "Wide - a bar across the whole screen" off) || exit 0
+fi
+case "$MODE" in
+  visor) LENGTH=fit ;;
+  wide)  LENGTH=fill ;;
+  *) echo "usage: goggles-panel visor|wide" >&2; exit 2 ;;
+esac
+SCRIPT="panels().forEach(function (p) {
+  if (p.formFactor !== 'horizontal') { return; }
+  try { p.floating = true; } catch (e) {}
+  try { p.lengthMode = '$LENGTH'; p.alignment = 'center'; } catch (e) {}
+});"
+if ! qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$SCRIPT" >/dev/null; then
+  echo "goggles-panel: couldn't reach the desktop (run this from your Plasma session)" >&2
+  exit 1
+fi
+kwriteconfig6 --file gogglesosrc --group Theme --key Panel "$MODE"
+echo "Taskbar layout: $MODE"
