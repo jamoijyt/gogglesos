@@ -52,6 +52,7 @@ APT_PACKAGES=(
   papirus-icon-theme                            # default icons (green folders)
   open-vm-tools open-vm-tools-desktop           # VMware guest tools (resize, clipboard)
   software-properties-common
+  fastfetch                                     # system info with the Goggles logo (/etc/xdg/fastfetch)
 )
 
 # Flatpaks (installed system-wide from Flathub at build time; failures are non-fatal)
