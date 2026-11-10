@@ -382,7 +382,7 @@ def rollback():
         elif os.path.lexists(p):
             os.unlink(p)
     log.run(["tar", "-C", "/", "-xpzf", ROLLBACK_DIR + "/files.tar.gz"])
-    for cmd in (["update-grub"], ["update-initramfs", "-u"], ["sysctl", "--system"]):
+    for cmd in (["update-grub"], ["update-initramfs", "-u"], ["sysctl", "-q", "--system"]):
         try:
             log.run(cmd)
         except (UpdateError, OSError) as e:

@@ -54,6 +54,7 @@ ISO that keeps Kubuntu's Secure Boot chain, live session and Calamares installer
 | Look | **Glass** (default) or **Lite** mode, chosen in the installer and switchable with *Goggles Appearance*; frosted-glass taskbar and popups; Windows 10-style start menu (Tiled Menu); Goggles Dark colours; rounded corners; Papirus-Dark icons with green folders; green lock screen |
 | Branding | os-release, wallpaper, boot splash, live welcome screen, login, installer and slideshow, About-this-System |
 | VMs | VMware guest tools (screen resize, clipboard) |
+| Updates | **Goggles Update**: installed systems get new Goggles OS changes from GitHub without a new ISO |
 
 ## Building (Windows + WSL2, or any Ubuntu 26.04 machine)
 
@@ -84,6 +85,47 @@ Faster rebuilds:
 On a 16 GB PC, close other apps before the compression step, and run `wsl --shutdown`
 after a build to give WSL's memory back to Windows.
 
+## Updating an installed system
+
+Goggles Update applies Goggles OS changes (desktop look, branding, tools, new apps added to
+`config.sh`) to an installed system, so you don't need a new ISO for each change. It downloads the
+source for the chosen version from GitHub and runs the same configuration step the ISO build uses
+(`chroot/apply-system.sh`). Ubuntu packages and drivers keep updating through Discover as usual.
+
+- **App menu:** open **Goggles Update**. A daily check also shows a popup when there's something new.
+- **Terminal:**
+
+  ```bash
+  sudo goggles-update
+  ```
+
+- **Channels:** `stable` (the default) installs GitHub releases only. `main` installs every change
+  merged into the `main` branch, which is what you want while there are no releases yet:
+
+  ```bash
+  sudo goggles-update --channel main
+  ```
+
+- **Undo the last update:**
+
+  ```bash
+  sudo goggles-update --rollback
+  ```
+
+The Glass or Lite mode chosen in the installer, and each user's own choice in Goggles Appearance,
+are kept. Desktop changes show after logging out and back in. Each run is logged to
+`/var/log/gogglesos-update.log`.
+
+**Systems installed before Goggles Update existed** need it fetched once; after that it updates itself:
+
+```bash
+wget -O /tmp/goggles-update https://raw.githubusercontent.com/jamoijyt/gogglesos/main/overlay/usr/bin/goggles-update
+```
+
+```bash
+sudo python3 /tmp/goggles-update --channel main --apply
+```
+
 ## Testing in a VM
 
 ```powershell
@@ -102,7 +144,8 @@ new ISO, or add `-Recreate` to start from a blank disk.
 ```
 config.sh                     name, versions, package lists, GPU variant
 build.sh                      unpack ISO -> chroot customize -> repack ISO
-chroot/customize.sh           runs inside the live filesystem
+chroot/customize.sh           runs inside the live filesystem (packages, drivers, installer)
+chroot/apply-system.sh        system configuration shared by the build and Goggles Update
 chroot/calamares/             installer pages (Appearance: Glass / Lite)
 chroot/calamares-show.qml     installer slideshow
 chroot/tiledmenu-tiles.json   default start-menu tiles
@@ -111,6 +154,7 @@ branding/make-assets.sh       generates every image size from branding/source
 branding/build-installer-prompt.sh   rebuilds the live "Try or Install" screen with Goggles branding
 overlay/                      files installed into the system (/etc, /usr)
   usr/bin/goggles-theme       Glass / Lite switcher
+  usr/bin/goggles-update      Goggles Update (plus its daily check in usr/lib/systemd/user/)
   usr/local/bin/goggles-vr-setup   SteamVR setup helper
   usr/libexec/gogglesos/      lock-screen patch + re-apply hook run after package updates
 third_party/                  pinned, checksum-verified copies of upstream tools (see its README)
@@ -133,6 +177,10 @@ docs/images/                  website and README logos and screenshots
   Renaming it would break Secure Boot on later GRUB updates.
 - **RTX 50-series** needs NVIDIA's open kernel modules. Build with
   `NVIDIA_BRANCH=580-open`, but note that build will **not** support GTX 10-series cards.
+- **Goggles Update only installs what GitHub says is the requested commit.** It checks the
+  commit stamp GitHub puts in every source archive, and it only runs as root after you approve
+  it (menu: an administrator prompt; terminal: `sudo`). The daily check runs as your user and
+  only shows a popup.
 - **No code is downloaded and run at build time** except Ubuntu packages, the rounded-corners
   PPA, Flathub and Discord's official `.deb`. Other upstream tools are pinned in `third_party/`.
 - **Files are installed with root ownership and fixed permissions**, and the build fails if
