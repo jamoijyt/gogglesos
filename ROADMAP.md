@@ -34,7 +34,7 @@ The headsets used for testing. Each one has a supported route into SteamVR, so G
 | Headset | Route into SteamVR | Phase | Status |
 |---|---|---|---|
 | HTC Vive (Vive wands, Index controllers) | Native SteamVR Lighthouse driver; udev rules from `steam-devices` | 0–1 | ✅ expected to work, needs a test pass on Goggles OS |
-| Steam Frame | Valve's own streaming through the **Steam Frame wireless adapter** | 1 | ❓ verify the adapter and pairing work out of the box on Goggles OS; ship any needed udev rules or firmware |
+| Steam Frame | Valve's **Steam Link** over local Wi-Fi (main route). The Steam Frame wireless adapter is optional; its Linux setup is still unreliable | 1 | ❓ verify Steam Link streaming to the Frame works out of the box on Goggles OS; the adapter is a later extra |
 | Meta Quest 3 | **Goggles Link** | 3 | 📋 |
 | Meta Quest 2 | **Goggles Link** | 3 | 📋 |
 | Oculus Quest 1 | **Goggles Link** (lower-resolution profile) | 3 | 📋 Meta has ended Quest 1 updates, so the client must stay on toolchain/OpenXR versions that still run on it |
@@ -77,7 +77,11 @@ goggles-vr-session (supervisor service)
 
 ### Why ALVR and WiVRn probably fail here
 
-Both tools find the PC with **local discovery** (multicast/broadcast: mDNS, UDP broadcast). The test network is a **5 GHz Wi-Fi 5 range extender**, with the PC wired to it by Ethernet and the headset on its Wi-Fi. Many extenders rewrite client MAC addresses and filter or drop multicast traffic, which silently breaks that discovery. The same setup works on Windows with Air Link / Virtual Desktop, which find the PC through the user's account rather than local multicast. **This is the leading theory, not confirmed.** The Goggles Link network check (below) will confirm or rule it out.
+Both tools find the PC with **local discovery** (multicast/broadcast: mDNS, UDP broadcast). The test network is a **TP-Link RE200 (AC750) range extender** on 5 GHz Wi-Fi 5, with the PC wired to its Ethernet port and the headset on its Wi-Fi. The link itself is fine: it carries VR streaming without trouble. But in *range extender* (repeater) mode, extenders like this rewrite client MAC addresses and often filter or drop multicast traffic, which silently breaks that discovery. The same setup works on Windows with Air Link / Virtual Desktop, which find the PC through the user's account rather than local multicast. **This is the leading theory, not confirmed.** The Goggles Link network check (below) will confirm or rule it out.
+
+Quick checks before any code is written:
+- **Extender mode:** open the RE200's web page and look at *Operation Mode*. If it's in Range Extender mode and offers Access Point mode, try ALVR once in Access Point mode (the extender's Ethernet cable must then go to the router, not to the PC). If ALVR suddenly connects, the theory is confirmed.
+- **Steam Link to the Steam Frame:** if it streams fine on Goggles OS over the same extender, Linux and the network can carry VR streaming, which narrows the ALVR/WiVRn problem down to discovery and pairing.
 
 ### Design rules
 
@@ -100,9 +104,9 @@ Both tools find the PC with **local discovery** (multicast/broadcast: mDNS, UDP 
 
 ### Network baseline
 
-Design for the **current setup**: Wi-Fi 5 on 5 GHz, extender in the same room, PC wired to it. Plan on about 100–150 Mbps of video bitrate on that link, with a latency target under 50 ms motion-to-photon. Wi-Fi 6/6E is a bonus, not a requirement. Quest 1 and Quest 2 can't use 6 GHz anyway; Quest 3 can.
+Design for the **current setup**: the RE200's 5 GHz Wi-Fi 5 radio (single stream, 433 Mbps link rate, usually about 200 Mbps of real throughput), extender in the same room, PC wired to it. Plan on about 100–150 Mbps of video bitrate on that link, with a latency target under 50 ms motion-to-photon. Wi-Fi 6/6E is a bonus, not a requirement. Quest 1 and Quest 2 can't use 6 GHz anyway; Quest 3 can.
 
-❓ **Steam Frame wireless adapter:** research whether Linux sees it as a normal Wi-Fi device and whether it can host a link for Quest 3. If it's locked to the Steam Frame, Goggles Link stays on the extender.
+Goggles Link targets the extender. The Steam Frame wireless adapter is not part of the plan: its Linux setup is still unreliable, and the Frame streams fine over normal Wi-Fi with Steam Link anyway.
 
 ### Milestones
 
@@ -149,9 +153,9 @@ A CV1 is available for testing.
 | Test headsets | Rift CV1, HTC Vive (Vive wands + Index controllers), Quest 1, Quest 2, Quest 3, Steam Frame |
 | ALVR / WiVRn | They don't connect to these headsets on any distro tried, and work only briefly when they do. They're also clunky to set up. Build **Goggles Link** as Goggles OS's own app |
 | Goggles Home engine | Godot 4 |
-| Wi-Fi | 5 GHz Wi-Fi 5 extender in the play room, PC wired to it by Ethernet (works fine with Air Link / Virtual Desktop on Windows). Steam Frame wireless adapter also available |
+| Wi-Fi | TP-Link RE200 (AC750) extender on 5 GHz in the play room, PC wired to it by Ethernet. Works fine for VR streaming (Air Link / Virtual Desktop on Windows) |
+| Steam Frame | Streams with Steam Link over the same local Wi-Fi. The wireless adapter works but its Linux setup is unreliable, so it's optional |
 
 ## Open questions
 
-1. What model is the Wi-Fi extender, and is it in *repeater* or *access point* mode? Some extenders have an access point mode that stops them rewriting MAC addresses and passes multicast through.
-2. Does the Steam Frame already stream on Goggles OS (or any Linux distro) through its wireless adapter?
+1. Is the RE200 in *Range Extender* or *Access Point* mode? It's shown under *Operation Mode* on the extender's web page. See the quick checks under Phase 3.
