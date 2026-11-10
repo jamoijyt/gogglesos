@@ -1,0 +1,10 @@
+[Unit]
+Description=GogglesXR: keep SteamVR games going to the headset
+Documentation=https://github.com/jamoijyt/gogglesos/blob/main/ROADMAP.md
+
+[Path]
+PathChanged=%E/openvr/openvrpaths.vrpath
+Unit=gogglesxr-guard.service
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=GogglesXR: put the SteamVR-game translator back in first place
+ConditionPathExists=/usr/bin/gogglesxr
+# The fix rewrites the watched file once; don't let that loop
+StartLimitIntervalSec=10
+StartLimitBurst=4
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/gogglesxr fix

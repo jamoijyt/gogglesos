@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=GogglesXR
+Comment=Set up and check VR streaming to your headset
+Exec=gogglesxr
+Icon=gogglesos
+Categories=Game;Settings;
+Keywords=vr;quest;headset;openxr;steamvr;wivrn;
