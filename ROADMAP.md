@@ -77,12 +77,14 @@ goggles-vr-session (supervisor service)
 
 ### Why build it
 
-The current Linux options aren't good enough. The problem is the **software and the experience**, not the network:
+ALVR and WiVRn are impressive open-source projects, and plenty of people use them happily. **What follows is my own personal experience** on my own PC, headsets and network, not a verdict on either project. Results depend a lot on hardware and setup.
 
-- **ALVR** works on Windows over the same Wi-Fi, but it's clunky and hard to set up. On Linux it has never worked.
-- **WiVRn** is fragile. It breaks itself during install or after small changes.
+For me, the problem has been the **software and the experience**, not the network:
 
-ALVR working on Windows over the same extender shows the network is fine. Whatever stops it on Linux is on the Linux side: driver registration, firewall, encoder libraries, packaging. Goggles OS controls all of those, so Goggles Link can get them right by default.
+- **ALVR** works for me on Windows over the same Wi-Fi, but I find it clunky and hard to set up. On Linux I've never got it working.
+- **WiVRn** has been fragile for me. It has broken itself during install or after small changes.
+
+Since ALVR works for me on Windows over the same extender, my network is fine. Whatever stopped it on Linux for me is probably on the Linux side: driver registration, firewall, encoder libraries, packaging. Goggles OS controls all of those, so Goggles Link can get them right by default on Goggles OS.
 
 **The bar to meet:** Air Link, and Steam Link on the Steam Frame. Put the headset on, pick the PC, play.
 
@@ -159,7 +161,7 @@ A CV1 is available for testing.
 | Question | Answer |
 |---|---|
 | Test headsets | Rift CV1, HTC Vive (Vive wands + Index controllers), Quest 1, Quest 2, Quest 3, Steam Frame |
-| ALVR / WiVRn | ALVR works on Windows but is clunky and hard to set up, and has never worked on Linux. WiVRn breaks itself during install or after small changes. The problem is the software and experience, not the network. Build **Goggles Link** as a simpler Linux PCVR streamer, Goggles OS's own app |
+| ALVR / WiVRn | From my own experience only: ALVR works for me on Windows but I find it clunky and hard to set up, and I've never got it working on Linux. WiVRn has broken itself for me during install or after small changes. For me the problem is the software and experience, not the network. Build **Goggles Link** as a simpler Linux PCVR streamer, Goggles OS's own app |
 | Goggles Home engine | Godot 4 |
 | Wi-Fi | TP-Link RE200 (AC750) extender on 5 GHz in the play room, PC wired to it by Ethernet. Works fine for VR streaming, including ALVR on Windows |
 | Steam Frame | Streams with Steam Link over the same local Wi-Fi. The wireless adapter works but its Linux setup is unreliable, so it's optional |
