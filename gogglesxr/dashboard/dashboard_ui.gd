@@ -341,24 +341,63 @@ func _build_library(body: Control) -> void:
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	body.add_child(scroll)
 	var grid := GridContainer.new()
-	grid.columns = 3
+	grid.columns = 5
 	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	grid.add_theme_constant_override("h_separation", 14)
 	grid.add_theme_constant_override("v_separation", 14)
 	scroll.add_child(grid)
-	var games := SteamLibrary.installed_games()
+	var games := SteamLibrary.games()
 	if games.is_empty():
 		grid.columns = 1
-		grid.add_child(_label("No installed Steam games were found.", &"Muted"))
+		grid.add_child(_label("No VR games were found. Install one in Steam, or check the Library page of the GogglesXR app on the desktop.", &"Muted", true))
 		return
 	for game in games:
-		var card := _button(game.name)
-		card.theme_type_variation = &"Card"
-		card.custom_minimum_size = Vector2(0, 96)
-		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		card.clip_text = true
-		card.pressed.connect(_launch.bind(game))
-		grid.add_child(card)
+		grid.add_child(_game_card(game))
+
+
+## A cover-art card: Steam's cover with the name underneath, or a tinted card with the name.
+func _game_card(game: Dictionary) -> Control:
+	var art_size := Vector2i(216, 300)
+	var card := Button.new()
+	card.theme_type_variation = &"Card"
+	card.focus_mode = Control.FOCUS_NONE
+	card.custom_minimum_size = Vector2(art_size.x + 12, art_size.y + 58)
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.clip_contents = true
+	card.pressed.connect(_launch.bind(game))
+	var box := VBoxContainer.new()
+	box.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 6)
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_theme_constant_override("separation", 6)
+	card.add_child(box)
+	var texture := SteamLibrary.cover(str(game.get("art", "")), art_size)
+	if texture:
+		var picture := TextureRect.new()
+		picture.texture = texture
+		picture.custom_minimum_size = Vector2(art_size)
+		picture.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		picture.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		picture.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		picture.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		box.add_child(picture)
+	else:
+		var blank := PanelContainer.new()
+		blank.theme_type_variation = &"Art"
+		blank.custom_minimum_size = Vector2(art_size)
+		blank.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		blank.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var initials := _label("".join(Array(str(game.name).replace(":", " ").split(" ", false)).slice(0, 3).map(func(w): return w[0].to_upper())), &"Clock")
+		initials.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		initials.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		blank.add_child(initials)
+		box.add_child(blank)
+	var title := _label(("★ " if game.get("favourite", false) else "") + str(game.name), &"Muted")
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.clip_text = true
+	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	title.add_theme_color_override("font_color", INK)
+	box.add_child(title)
+	return card
 
 
 func _build_settings(body: Control) -> void:
@@ -451,7 +490,7 @@ func _build_strip() -> void:
 
 # ------------------------------------------------------------------ actions
 func _launch(game: Dictionary) -> void:
-	say("Starting %s" % game.name if SteamLibrary.launch(game.id) else "Couldn't start Steam")
+	say("Starting %s" % game.name if SteamLibrary.launch(str(game.launch)) else "Couldn't start Steam")
 
 
 func _read_volume() -> float:

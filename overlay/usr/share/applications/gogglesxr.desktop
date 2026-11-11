@@ -1,8 +1,9 @@
 [Desktop Entry]
 Type=Application
 Name=GogglesXR
-Comment=Set up and check VR streaming to your headset
-Exec=gogglesxr
+Comment=VR on Goggles OS: connect a headset, manage your game library, settings
+Exec=gogglesxr app
 Icon=gogglesos
 Categories=Game;Settings;
-Keywords=vr;quest;headset;openxr;steamvr;wivrn;
+Keywords=vr;quest;headset;openxr;steamvr;wivrn;library;
+StartupWMClass=gogglesxr

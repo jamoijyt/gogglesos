@@ -1,8 +1,8 @@
 [
   {"tileType": "group", "x": 0, "y": 0, "w": 6, "h": 1, "label": "Play"},
   {"x": 0, "y": 1, "w": 2, "h": 2, "url": "steam.desktop", "label": "Steam", "backgroundColor": "#801b2838"},
-  {"x": 2, "y": 1, "w": 2, "h": 2, "url": "goggles-vr-setup.desktop", "label": "VR Setup", "backgroundColor": "#993ddc84"},
-  {"x": 4, "y": 1, "w": 2, "h": 1, "url": "goggles-install-steamvr.desktop", "label": "Install SteamVR"},
+  {"x": 2, "y": 1, "w": 2, "h": 2, "url": "gogglesxr.desktop", "label": "GogglesXR", "backgroundColor": "#993ddc84"},
+  {"x": 4, "y": 1, "w": 2, "h": 1, "url": "goggles-update.desktop", "label": "Goggles Update"},
   {"x": 4, "y": 2, "w": 1, "h": 1, "url": "net.davidotek.pupgui2.desktop", "label": "ProtonUp"},
   {"x": 5, "y": 2, "w": 1, "h": 1, "url": "discord.desktop", "label": "Discord", "backgroundColor": "#805865f2"},
 

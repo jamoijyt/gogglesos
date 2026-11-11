@@ -53,9 +53,9 @@ slide() { # n title body
     "$OUT/slide-$1.png"
 }
 slide 1 "Welcome to Goggles OS" "The Linux desktop built for PC VR gaming. Sit back while it installs."
-slide 2 "SteamVR ready" "Steam, SteamVR device rules and Proton tools come preinstalled. Valve Index, HTC Vive and streamed headsets are supported."
+slide 2 "VR ready with GogglesXR" "GogglesXR streams your VR games to standalone headsets such as the Meta Quest. Steam and Proton tools come preinstalled."
 slide 3 "Tuned for your GPU" "AMD Mesa and NVIDIA drivers, low-latency kernel scheduling and GameMode keep frame times smooth."
-slide 4 "One step after SteamVR" "Install SteamVR from Steam, then open Goggles VR Setup from the app menu to enable asynchronous reprojection."
+slide 4 "Put your headset on" "Open GogglesXR from the app menu, connect your headset, and start a VR game from Steam or from the dashboard inside the headset."
 slide 5 "Stream and chat" "OBS Studio, Discord, MangoHud and ProtonUp-Qt are ready the moment you log in."
 
 # Installer "Appearance" previews (960x540): a window over the wallpaper, glass vs solid

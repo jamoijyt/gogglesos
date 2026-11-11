@@ -16,8 +16,11 @@ does the setup that otherwise has to be done by hand:
   gogglesxr fix       repair the OpenVR paths file if GogglesXR is on (used by the watcher)
   gogglesxr start     open the runtime's window to connect a headset
   gogglesxr dashboard open the GogglesXR dashboard (in the headset if one is connected,
-                      otherwise in a preview window)
-  gogglesxr           ask with a dialog (menu entry)
+                      otherwise in a preview window). --overlay draws it on top of the
+                      running game; the menu button shows and hides it
+  gogglesxr library   list the installed games and whether they can run in VR (--json)
+  gogglesxr app       open the GogglesXR desktop app (--background: tray icon only)
+  gogglesxr           open the desktop app (menu entry)
 """
 import glob
 import hashlib
@@ -44,6 +47,7 @@ TITLE = "GogglesXR"
 # The dashboard is a Godot 4 project. Ubuntu only packages Godot 3, so the official Godot 4
 # build is fetched once (checksum pinned here) unless a Godot 4 is already installed.
 DASHBOARD_SRC = "/usr/share/gogglesos/gogglesxr-dashboard"
+APP_DIR = os.environ.get("GOGGLESXR_APP_DIR") or "/usr/share/gogglesos/gogglesxr"
 DATA = os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local/share"), "gogglesxr")
 GODOT_VERSION = "4.4.1-stable"
 GODOT_BIN = f"Godot_v{GODOT_VERSION}_linux.x86_64"
@@ -338,7 +342,17 @@ def fetch_godot():
     return path
 
 
+def load_library():
+    sys.path.insert(0, APP_DIR)
+    import library
+    return library
+
+
 def dashboard(extra=()):
+    extra = list(extra)
+    overlay = "--overlay" in extra
+    if overlay:
+        extra.remove("--overlay")
     src = os.environ.get("GOGGLESXR_DASHBOARD_SRC") or DASHBOARD_SRC
     if not os.path.isfile(os.path.join(src, "project.godot")):
         print(f"gogglesxr: the dashboard isn't installed ({src}). Run: sudo goggles-update", file=sys.stderr)
@@ -347,15 +361,65 @@ def dashboard(extra=()):
     project = os.path.join(DATA, "dashboard")
     os.makedirs(project, exist_ok=True)
     for name in os.listdir(src):
-        if name.endswith((".gd", ".tscn", ".godot", ".tres", ".uid")) and os.path.isfile(os.path.join(src, name)):
+        if name.endswith((".gd", ".tscn", ".godot", ".tres", ".uid", ".gdextension")) and os.path.isfile(os.path.join(src, name)):
             shutil.copy2(os.path.join(src, name), os.path.join(project, name))
+    # The overlay extension: Godot only loads extensions listed in its project cache
+    if os.path.isdir(os.path.join(src, "bin")):
+        shutil.copytree(os.path.join(src, "bin"), os.path.join(project, "bin"), dirs_exist_ok=True)
+        os.makedirs(os.path.join(project, ".godot"), exist_ok=True)
+        with open(os.path.join(project, ".godot", "extension_list.cfg"), "w", encoding="utf-8") as f:
+            f.write("res://gogglesxr_overlay.gdextension\n")
+    try:                                   # games, cover art and the user's choices for the Library panel
+        load_library().write_dashboard_list(_show_all_games())
+    except Exception as e:                 # the dashboard falls back to reading Steam's files itself
+        print(f"gogglesxr: couldn't prepare the game list ({e})", file=sys.stderr)
     godot = find_godot() or fetch_godot()
     if not godot:
         return 1
-    if not os.path.exists(IPC_SOCKET):
+    env = dict(os.environ)
+    if overlay:
+        if not os.path.exists(IPC_SOCKET):
+            print("gogglesxr: no headset is connected, so there is no game to draw on top of.", file=sys.stderr)
+            return 1
+        env["GOGGLESXR_OVERLAY"] = "1"
+    elif not os.path.exists(IPC_SOCKET):
         print("No headset connected, so the dashboard opens in a preview window.\n"
               "For the headset: gogglesxr start, connect the Quest, then run this again.")
-    return subprocess.run([godot, "--path", project, *extra]).returncode
+    return subprocess.run([godot, "--path", project, *extra], env=env).returncode
+
+
+def _show_all_games():
+    try:
+        with open(os.path.join(CONFIG, "gogglesxr", "settings.json"), encoding="utf-8") as f:
+            return bool(json.load(f).get("show_all_games"))
+    except (OSError, ValueError):
+        return False
+
+
+def library_command(args):
+    lib = load_library()
+    games = lib.games()
+    if "--json" in args:
+        json.dump(games, sys.stdout, indent=1)
+        print()
+        return 0
+    for g in games:
+        flags = ("★ " if g["favourite"] else "  ") + ("(hidden) " if g["hidden"] else "")
+        print(f"{flags}{g['title']:<40.40} {g['vr_label']}")
+    print(f"\n{sum(1 for g in games if g['is_vr'])} of {len(games)} games can run in VR. Manage them in the GogglesXR app.")
+    return 0
+
+
+def app(args):
+    try:
+        import PyQt6  # noqa: F401
+    except ImportError:
+        print("gogglesxr: the desktop app needs python3-pyqt6 (sudo apt install python3-pyqt6). Using the simple dialog.",
+              file=sys.stderr)
+        return gui()
+    sys.path.insert(0, APP_DIR)
+    import app as desktop_app
+    return desktop_app.main(args)
 
 
 def gui():
@@ -379,15 +443,21 @@ def gui():
 
 
 def status():
+    if "--json" in sys.argv[2:]:
+        items = [{"ok": ok, "title": title, "todo": todo} for ok, title, todo in checks()]
+        json.dump({"ready": all(i["ok"] is not False for i in items), "checks": items}, sys.stdout, indent=1)
+        print()
+        return 0 if all(i["ok"] is not False for i in items) else 1
     text, good = status_text()
     print(text)
     return 0 if good else 1
 
 
 def main():
-    cmd = sys.argv[1] if len(sys.argv) > 1 else "--gui"
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "app"
     actions = {"on": turn_on, "off": turn_off, "status": status, "fix": fix, "start": start, "--gui": gui,
-               "dashboard": lambda: dashboard(sys.argv[2:])}
+               "dashboard": lambda: dashboard(sys.argv[2:]), "library": lambda: library_command(sys.argv[2:]),
+               "app": lambda: app(sys.argv[2:])}
     if cmd not in actions:
         print(__doc__.strip(), file=sys.stderr)
         return 2

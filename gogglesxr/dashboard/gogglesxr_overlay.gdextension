@@ -1,0 +1,8 @@
+[configuration]
+
+entry_symbol = "gogglesxr_overlay_init"
+compatibility_minimum = "4.4"
+
+[libraries]
+
+linux.x86_64 = "res://bin/libgogglesxr_overlay.linux.x86_64.so"

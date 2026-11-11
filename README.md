@@ -7,7 +7,7 @@
 
 <p align="center">
   <b>The Linux desktop built for PC VR gaming.</b><br>
-  SteamVR-ready, tuned for NVIDIA and AMD, with a frosted-glass KDE Plasma desktop.
+  VR-ready with GogglesXR, tuned for NVIDIA and AMD, with a frosted-glass KDE Plasma desktop.
 </p>
 
 <p align="center">
@@ -46,7 +46,7 @@ ISO that keeps Kubuntu's Secure Boot chain, live session and Calamares installer
 
 | Area | What Goggles OS adds |
 |---|---|
-| VR | **GogglesXR** setup for streaming to standalone headsets (`gogglesxr on`: SteamVR games reach the headset with no launch options), Steam, `steam-devices` udev rules (Index, Vive, Quest, controllers), **Goggles VR Setup** (grants SteamVR's compositor `CAP_SYS_NICE` for async reprojection), **Install SteamVR** helper |
+| VR | **GogglesXR**: streams VR to standalone headsets such as the Meta Quest and runs SteamVR games with no per-game setup. Desktop app (status, game library with cover art, settings) that starts at login, and a five-panel dashboard inside the headset, drawn on top of your game. Steam and `steam-devices` udev rules (Index, Vive, Quest, controllers) |
 | GPU | Mesa + Vulkan for AMD/Intel (64- and 32-bit). The `nvidia` variant also includes NVIDIA 580 with prebuilt, signed modules (GTX 900 to RTX 40, including GTX 1080) |
 | Kernel | Stock Ubuntu kernel with `preempt=full threadirqs` (full preemption), plus SteamOS-style sysctls (`max_map_count`, no split-lock penalty, low swappiness) |
 | Gaming | GameMode, MangoHud, GOverlay, Protontricks, ProtonUp-Qt (Flatpak, for Proton-GE), Flathub enabled |
@@ -147,6 +147,7 @@ build.sh                      unpack ISO -> chroot customize -> repack ISO
 chroot/customize.sh           runs inside the live filesystem (packages, drivers, installer)
 chroot/apply-system.sh        system configuration shared by the build and Goggles Update
 gogglesxr/dashboard/          GogglesXR dashboard (Godot 4 project): five panels, lasers, grip + swipe
+gogglesxr/overlay-extension/  small C extension that lets the dashboard draw on top of a running game
 chroot/visor-panel.py         draws the Visor taskbar and popup backgrounds for the Plasma theme
 chroot/splash/                startup splash (QML)
 chroot/sddm-theme/            login screen (SDDM theme, QML)
@@ -161,9 +162,9 @@ overlay/                      files installed into the system (/etc, /usr)
   usr/bin/goggles-theme       Glass / Lite switcher
   usr/bin/goggles-panel       taskbar layout switcher (Visor / wide)
   usr/bin/goggles-hud         show or remove the Goggles HUD widget
-  usr/bin/gogglesxr           GogglesXR setup and self-check (VR streaming to standalone headsets)
+  usr/bin/gogglesxr           GogglesXR command: setup, self-check, dashboard, desktop app
+  usr/share/gogglesos/gogglesxr/   GogglesXR desktop app (app.py) and game library (library.py)
   usr/bin/goggles-update      Goggles Update (plus its daily check in usr/lib/systemd/user/)
-  usr/local/bin/goggles-vr-setup   SteamVR setup helper
   usr/libexec/gogglesos/      lock-screen patch + re-apply hook run after package updates
 third_party/                  pinned, checksum-verified copies of upstream tools (see its README)
 test-iso.sh                   QEMU boot test with screenshots (headless, window or browser view)
