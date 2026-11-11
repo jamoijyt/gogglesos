@@ -10,11 +10,15 @@ import os
 import subprocess
 import sys
 
-from PyQt6.QtCore import QProcess, QSize, Qt, QTimer
+import math
+import time
+
+from PyQt6.QtCore import QEasingCurve, QProcess, QPropertyAnimation, QSize, Qt, QTimer
 from PyQt6.QtGui import QAction, QBrush, QColor, QFont, QIcon, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
-from PyQt6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
-                             QListView, QListWidget, QListWidgetItem, QMainWindow, QMenu, QPushButton, QScrollArea,
-                             QStackedWidget, QSystemTrayIcon, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, QFrame, QGraphicsOpacityEffect,
+                             QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListView, QListWidget, QListWidgetItem,
+                             QMainWindow, QMenu, QPushButton, QScrollArea, QSlider, QStackedWidget, QSystemTrayIcon,
+                             QVBoxLayout, QWidget)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import library  # noqa: E402
@@ -24,7 +28,10 @@ SETTINGS_FILE = os.path.join(library.CONFIG, "settings.json")
 AUTOSTART_SYSTEM = "/etc/xdg/autostart/gogglesxr.desktop"
 AUTOSTART_USER = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(library.HOME, ".config"),
                               "autostart", "gogglesxr.desktop")
-DEFAULTS = {"keep_ready": True, "auto_dashboard": True, "show_all_games": False}
+DEFAULTS = {"keep_ready": True, "auto_dashboard": True, "show_all_games": False, "animations": True,
+            "pointer_smoothing": 60}
+ENGINE_BUS = "io.github.wivrn.Server"          # the streaming engine's D-Bus name
+ENGINE_PATH = "/io/github/wivrn/Server"
 ACCENT, ACCENT_2, INK, MUTED = "#3ddc84", "#f1ff9c", "#e6f3ee", "#9fbfb4"
 COVER = QSize(150, 225)
 
@@ -60,6 +67,11 @@ QListWidget::item:selected {{ background: rgba(61, 220, 132, 0.2); border: 1px s
 QCheckBox {{ spacing: 10px; padding: 6px 0; }}
 QCheckBox::indicator {{ width: 38px; height: 20px; border-radius: 10px; background: rgba(255, 255, 255, 0.14); border: 1px solid rgba(255, 255, 255, 0.2); }}
 QCheckBox::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; }}
+QSlider::groove:horizontal {{ height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.14); }}
+QSlider::sub-page:horizontal {{ background: {ACCENT}; border-radius: 3px; }}
+QSlider::handle:horizontal {{ width: 16px; height: 16px; margin: -6px 0; border-radius: 9px; background: {INK}; border: 3px solid {ACCENT}; }}
+#info {{ color: {MUTED}; font-size: 12px; }}
+#value {{ font-size: 14px; font-weight: 600; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; }}
 QScrollBar::handle:vertical {{ background: rgba(61, 220, 132, 0.4); border-radius: 5px; min-height: 30px; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
@@ -90,9 +102,82 @@ def load_settings():
 
 
 def save_settings(data):
+    # Merge with what is on disk: the dashboard in the headset writes to this file too
+    merged = {}
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
+            merged = json.load(f)
+    except (OSError, ValueError):
+        pass
+    merged.update(data)
     os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
     with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=1)
+        json.dump(merged, f, indent=1)
+
+
+def headset_info():
+    """What the streaming engine reports about the headset, as {property name: value}.
+
+    Read over D-Bus from the engine (WiVRn's server). Returns {} when it isn't running or
+    doesn't answer; the caller shows only the properties that are present.
+    """
+    fake = os.environ.get("GOGGLESXR_FAKE_HEADSET")
+    if fake:
+        return json.loads(fake)
+    try:
+        from PyQt6.QtDBus import QDBusConnection, QDBusInterface, QDBusMessage
+        bus = QDBusConnection.sessionBus()
+        if not bus.isConnected() or not bus.interface().isServiceRegistered(ENGINE_BUS).value():
+            return {}
+        engine = QDBusInterface(ENGINE_BUS, ENGINE_PATH, "org.freedesktop.DBus.Properties", bus)
+        engine.setTimeout(500)
+        reply = engine.call("GetAll", ENGINE_BUS)
+        if reply.type() != QDBusMessage.MessageType.ReplyMessage or not reply.arguments():
+            return {}
+        return dict(reply.arguments()[0])
+    except Exception:
+        return {}
+
+
+def describe_headset(info):
+    """Rows for the Home page from headset_info(): [(label, text)]. Unknown shapes are skipped."""
+    lowered = {str(k).lower(): v for k, v in info.items()}
+
+    def get(*names):
+        for name in names:
+            if name in lowered:
+                return lowered[name]
+        return None
+
+    def numbers(value):
+        try:
+            return [float(v) for v in value]
+        except (TypeError, ValueError):
+            return []
+
+    rows = []
+    size = numbers(get("recommendedeyesize", "eyesize"))
+    if len(size) == 2:
+        rows.append(("Resolution per eye", "%d × %d" % (size[0], size[1])))
+    rate = get("preferredrefreshrate", "refreshrate")
+    rates = numbers(get("availablerefreshrates"))
+    try:
+        rate = float(rate)
+    except (TypeError, ValueError):
+        rate = 0.0
+    if rate > 0:
+        rows.append(("Refresh rate", "%g Hz" % rate))
+    elif rates:
+        rows.append(("Refresh rates", ", ".join("%g" % r for r in rates) + " Hz"))
+    codecs = get("supportedcodecs", "codecs")
+    if isinstance(codecs, (list, tuple)) and codecs:
+        rows.append(("Video", ", ".join(str(c).upper() for c in codecs)))
+    for names, text in ((("handtracking",), "Hand tracking"), (("eyegaze", "eyetracking"), "Eye tracking"),
+                        (("facetracking",), "Face tracking")):
+        value = get(*names)
+        if isinstance(value, bool):
+            rows.append((text, "Yes" if value else "No"))
+    return rows
 
 
 def autostart_enabled():
@@ -201,6 +286,51 @@ def card():
     return frame, box
 
 
+class Lenses(QWidget):
+    """The two lenses as a status light: breathing while waiting, lit when a headset is
+    connected, dim when something needs fixing."""
+
+    def __init__(self):
+        super().__init__()
+        self.state = "waiting"
+        self.animated = True
+        self.setFixedSize(132, 84)
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update)
+        self.timer.start(40)
+
+    def set_state(self, state, animated):
+        self.state, self.animated = state, animated
+        (self.timer.start if animated and state == "waiting" else self.timer.stop)()
+        self.update()
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        breath = 0.5 + 0.5 * math.sin(time.monotonic() * 2.4) if self.animated else 0.6
+        ring = {"connected": QColor(ACCENT), "problem": QColor("#ff9c8a")}.get(self.state, QColor(ACCENT))
+        if self.state == "waiting":
+            ring.setAlphaF(0.35 + 0.5 * breath)
+        for index, cx in enumerate((38, 94)):
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(ring, 4))
+            p.drawEllipse(cx - 28, 14, 56, 56)
+            if self.state == "connected":
+                grad = QLinearGradient(cx, 24, cx, 60)
+                grad.setColorAt(0, QColor(ACCENT_2))
+                grad.setColorAt(1, QColor(ACCENT))
+                p.setBrush(QBrush(grad))
+                p.setPen(Qt.PenStyle.NoPen)
+                p.drawEllipse(cx - 17, 25, 34, 34)
+            elif self.state == "waiting":
+                dot = QColor(ACCENT)
+                dot.setAlphaF(0.15 + 0.35 * (breath if index == 0 else 1 - breath))
+                p.setBrush(dot)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.drawEllipse(cx - 12, 30, 24, 24)
+        p.end()
+
+
 class Window(QMainWindow):
     def __init__(self, tool):
         super().__init__()
@@ -269,17 +399,49 @@ class Window(QMainWindow):
 
     def show_page(self, index):
         self.nav.button(index).setChecked(True)
+        changed = self.pages.currentIndex() != index
         self.pages.setCurrentIndex(index)
+        if index == 0:
+            self.refresh_quick()
         if index == 1:
             self.reload_library()
+        if changed and self.settings["animations"] and self.isVisible():
+            self.fade_in(self.pages.currentWidget())
+
+    def fade_in(self, widget):
+        """A short fade when changing page. The effect is removed afterwards so it costs nothing."""
+        effect = QGraphicsOpacityEffect(widget)
+        widget.setGraphicsEffect(effect)
+        self.page_fade = QPropertyAnimation(effect, b"opacity", self)
+        self.page_fade.setDuration(190)
+        self.page_fade.setStartValue(0.0)
+        self.page_fade.setEndValue(1.0)
+        self.page_fade.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.page_fade.finished.connect(lambda: widget.setGraphicsEffect(None))
+        self.page_fade.start()
 
     def build_home(self):
         widget, box = self.page("GogglesXR", "VR on Goggles OS")
+
+        # Headset: status light, headline, what the headset reports, and the main buttons
         hero, hero_box = card()
+        top = QHBoxLayout()
+        top.setSpacing(20)
+        self.lenses = Lenses()
+        top.addWidget(self.lenses, 0, Qt.AlignmentFlag.AlignTop)
+        text = QVBoxLayout()
+        text.setSpacing(4)
+        text.addWidget(label("HEADSET", "eyebrow"))
         self.headline = label("", "headline")
         self.subline = label("", "muted", True)
-        hero_box.addWidget(self.headline)
-        hero_box.addWidget(self.subline)
+        text.addWidget(self.headline)
+        text.addWidget(self.subline)
+        top.addLayout(text, 1)
+        hero_box.addLayout(top)
+        self.info_grid = QGridLayout()
+        self.info_grid.setHorizontalSpacing(28)
+        self.info_grid.setVerticalSpacing(2)
+        hero_box.addLayout(self.info_grid)
         buttons = QHBoxLayout()
         self.connect_button = QPushButton("Connect a headset")
         self.connect_button.setObjectName("primary")
@@ -295,14 +457,71 @@ class Window(QMainWindow):
         hero_box.addLayout(buttons)
         box.addWidget(hero)
 
+        # Quick launch: the VR game played most recently
+        quick, quick_box = card()
+        row = QHBoxLayout()
+        row.setSpacing(18)
+        self.quick_cover = QLabel()
+        self.quick_cover.setFixedSize(80, 120)
+        row.addWidget(self.quick_cover)
+        words = QVBoxLayout()
+        words.setSpacing(4)
+        words.addWidget(label("QUICK LAUNCH", "eyebrow"))
+        self.quick_name = label("", "headline", True)
+        self.quick_note = label("", "muted", True)
+        words.addWidget(self.quick_name)
+        words.addWidget(self.quick_note)
+        words.addStretch(1)
+        row.addLayout(words, 1)
+        self.quick_button = QPushButton("Play")
+        self.quick_button.setObjectName("primary")
+        self.quick_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.quick_button.setMinimumWidth(130)
+        self.quick_button.clicked.connect(self.quick_launch)
+        row.addWidget(self.quick_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        quick_box.addLayout(row)
+        box.addWidget(quick)
+        self.quick_game = None
+        self.refresh_quick()
+
+        # Checks: listed in full only while something needs fixing
         checks, self.checks_box = card()
-        self.checks_box.addWidget(label("CHECKS", "eyebrow"))
+        self.checks_title = label("CHECKS", "eyebrow")
+        self.checks_box.addWidget(self.checks_title)
         self.check_rows = QVBoxLayout()
         self.check_rows.setSpacing(0)
         self.checks_box.addLayout(self.check_rows)
         box.addWidget(checks)
         box.addStretch(1)
         return widget
+
+    def refresh_quick(self):
+        try:
+            game = library.last_played()
+        except Exception:
+            game = None
+        self.quick_game = game
+        self.quick_button.setEnabled(game is not None)
+        if game is None:
+            self.quick_cover.setPixmap(QPixmap())
+            self.quick_name.setText("Nothing played yet")
+            self.quick_note.setText("Start a VR game from the Library page and it will appear here.")
+            return
+        self.quick_cover.setPixmap(cover_pixmap(game).scaled(self.quick_cover.size(), Qt.AspectRatioMode.KeepAspectRatio,
+                                                             Qt.TransformationMode.SmoothTransformation))
+        self.quick_name.setText(game["title"])
+        when = time.strftime("%-d %B", time.localtime(game["played"]))
+        self.quick_note.setText(f'Last played {when} · {game["vr_label"]}')
+
+    def quick_launch(self):
+        if self.quick_game:
+            self.play(self.quick_game)
+
+    def play(self, game):
+        library.note_launch(game["id"])
+        subprocess.Popen(["steam", game["launch"]], start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.refresh_quick()
 
     def build_library(self):
         widget, box = self.page("Library", "Your games")
@@ -370,9 +589,23 @@ class Window(QMainWindow):
 
     def build_settings(self):
         widget, box = self.page("Settings", "Settings")
-        frame, f = card()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
+        inner_box = QVBoxLayout(inner)
+        inner_box.setContentsMargins(0, 0, 8, 0)
+        inner_box.setSpacing(14)
+        scroll.setWidget(inner)
+        box.addWidget(scroll, 1)
 
-        def toggle(text, note, value, changed):
+        def group(title):
+            frame, f = card()
+            f.addWidget(label(title.upper(), "eyebrow"))
+            inner_box.addWidget(frame)
+            return f
+
+        def toggle(f, text, note, value, changed):
             check = QCheckBox(text)
             check.setChecked(value)
             check.toggled.connect(changed)
@@ -382,23 +615,46 @@ class Window(QMainWindow):
             f.addWidget(hint)
             return check
 
-        self.s_autostart = toggle("Start GogglesXR when I log in",
+        f = group("Starting up")
+        self.s_autostart = toggle(f, "Start GogglesXR when I log in",
                                   "Sits in the system tray and gets VR ready. Turn this off to start it yourself from the app menu.",
                                   autostart_enabled(), set_autostart)
-        self.s_ready = toggle("Keep the VR runtime running in the background",
+        self.s_ready = toggle(f, "Keep the VR runtime running in the background",
                               "The headset can connect at any time without opening anything on the PC first.",
                               self.settings["keep_ready"], lambda on: self.change("keep_ready", on))
-        self.s_dash = toggle("Open the dashboard in the headset automatically",
+
+        f = group("In the headset")
+        self.s_dash = toggle(f, "Open the dashboard in the headset automatically",
                              "Starts the dashboard on top of your game when a headset connects. The menu button shows and hides it.",
                              self.settings["auto_dashboard"], lambda on: self.change("auto_dashboard", on))
-        self.s_all = toggle("Show non-VR games in the headset's library",
+        self.s_all = toggle(f, "Show non-VR games in the headset's library",
                             "By default the headset only lists games that can run in VR.",
                             self.settings["show_all_games"], lambda on: self.change("show_all_games", on))
-        self.s_on = toggle("Send SteamVR games to GogglesXR",
+        row = QHBoxLayout()
+        row.addWidget(label("Pointer smoothing"))
+        self.s_smooth = QSlider(Qt.Orientation.Horizontal)
+        self.s_smooth.setRange(0, 100)
+        self.s_smooth.setValue(int(self.settings["pointer_smoothing"]))
+        self.s_smooth_value = label(str(self.s_smooth.value()), "muted")
+        self.s_smooth_value.setFixedWidth(34)
+        self.s_smooth.valueChanged.connect(lambda v: self.s_smooth_value.setText(str(v)))
+        self.s_smooth.sliderReleased.connect(lambda: self.change("pointer_smoothing", self.s_smooth.value()))
+        row.addWidget(self.s_smooth, 1)
+        row.addWidget(self.s_smooth_value)
+        f.addLayout(row)
+        f.addWidget(label("Steadies the laser on the dashboard. 0 follows your hand exactly; higher holds the pointer stiller "
+                          "on small buttons. Takes effect the next time the dashboard opens.", "muted", True))
+
+        f = group("Look and feel")
+        self.s_anim = toggle(f, "Animations",
+                             "Page fades and the status light here, and the dashboard's open and close animation in the headset.",
+                             self.settings["animations"], lambda on: self.change("animations", on))
+
+        f = group("Games")
+        self.s_on = toggle(f, "Send SteamVR games to GogglesXR",
                            "Turn this off to hand VR back to SteamVR, for a wired headset. Restart Steam after changing it.",
                            self.tool.is_on(), self.switch)
-        box.addWidget(frame)
-        box.addStretch(1)
+        inner_box.addStretch(1)
         return widget
 
     # -------------------------------------------------------------- home
@@ -408,21 +664,40 @@ class Window(QMainWindow):
                              .replace("Open GogglesXR (run: gogglesxr start) and connect the headset.", "Press Connect a headset."))
         checks = [(ok, title, reword(todo)) for ok, title, todo in self.tool.checks()]
         failed = [c for c in checks if c[0] is False]
-        connected = os.path.exists(self.tool.IPC_SOCKET)
+        info = headset_info()
+        reported = {str(k).lower(): v for k, v in info.items()}.get("headsetconnected")
+        connected = reported if isinstance(reported, bool) else os.path.exists(self.tool.IPC_SOCKET)
+        animated = self.settings["animations"]
         if failed:
             self.headline.setText("GogglesXR needs setting up")
             self.subline.setText(failed[0][2] or failed[0][1])
+            self.lenses.set_state("problem", animated)
         elif connected:
             self.headline.setText("Headset connected")
             self.subline.setText("Start a VR game from Steam, the Library page, or the dashboard in the headset.")
+            self.lenses.set_state("connected", animated)
         else:
             self.headline.setText("Ready for a headset")
             self.subline.setText("Put the headset on and open the GogglesXR streaming app in it. This PC will show up there.")
+            self.lenses.set_state("waiting", animated)
         self.setup_button.setVisible(bool(failed))
         self.dashboard_button.setEnabled(not failed)
+        self.connect_button.setVisible(not connected)
+
+        # What the headset reports (only while it is connected)
+        rows = [("Status", "Streaming to this PC")] + describe_headset(info) if connected and not failed else []
+        while self.info_grid.count():
+            self.info_grid.takeAt(0).widget().deleteLater()
+        for index, (name, value) in enumerate(rows):
+            self.info_grid.addWidget(label(name.upper(), "info"), 0, index)
+            self.info_grid.addWidget(label(value, "value"), 1, index)
+        if rows:
+            self.info_grid.setColumnStretch(len(rows), 1)
+
         while self.check_rows.count():
             self.check_rows.takeAt(0).widget().deleteLater()
-        for ok, title, todo in checks:
+        self.checks_title.setText("CHECKS" if failed else "CHECKS  ·  ALL GOOD")
+        for ok, title, todo in checks if failed else []:
             mark = {True: ("✓", ACCENT), False: ("✗", "#ff9c8a"), None: ("…", MUTED)}[ok]
             text = f'<span style="color:{mark[1]}; font-weight:600">{mark[0]}</span>&nbsp;&nbsp;{title}'
             if todo and ok is not True:
@@ -446,9 +721,11 @@ class Window(QMainWindow):
 
     def change(self, key, value):
         self.settings[key] = value
-        save_settings(self.settings)
+        save_settings({key: value})
         if key == "show_all_games":
             library.write_dashboard_list(value)
+        if key == "animations":
+            self.tick()
 
     # -------------------------------------------------------------- background work
     def background(self, connected, broken):
@@ -545,8 +822,7 @@ class Window(QMainWindow):
 
     def launch(self):
         if self.selected:
-            subprocess.Popen(["steam", self.selected["launch"]], start_new_session=True,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.play(self.selected)
 
     def open_folder(self):
         if self.selected and os.path.isdir(self.selected["folder"]):

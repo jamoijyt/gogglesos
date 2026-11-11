@@ -12,6 +12,8 @@ extends Control
 const SteamLibrary := preload("res://steam_library.gd")
 
 signal recentre_requested
+signal resume_requested
+signal smoothing_changed(amount: float)
 signal scale_changed(factor: float)
 
 const SIZE := Vector2(1280, 860)
@@ -44,6 +46,14 @@ var _clock: Label
 var _date: Label
 var _status: Label
 var _toast: Label
+# Current Game panel
+var _game := {}
+var _game_state: Label
+var _game_title: Label
+var _game_note: Label
+var _game_art: TextureRect
+var _game_button: Button
+var _smoothing_slider: HSlider
 var _tween: Tween
 # swipe state
 var _swiping := false
@@ -263,21 +273,35 @@ func _build_game(body: Control) -> void:
 	var art := PanelContainer.new()
 	art.theme_type_variation = &"Art"
 	art.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	art.clip_contents = true
 	row.add_child(art)
+	_game_art = TextureRect.new()
+	_game_art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_game_art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_game_art.modulate = Color(0.55, 0.55, 0.55)        # dimmed, so the text over it stays readable
+	_game_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	art.add_child(_game_art)
 	var art_box := VBoxContainer.new()
 	art_box.alignment = BoxContainer.ALIGNMENT_END
 	art.add_child(art_box)
-	art_box.add_child(_label("NO GAME RUNNING", &"Eyebrow"))
-	art_box.add_child(_label("GogglesXR", &"Title"))
-	art_box.add_child(_label("Start a game from the Library panel, on the right.", &"Muted"))
+	_game_state = _label("", &"Eyebrow")
+	_game_title = _label("", &"Title", true)
+	_game_note = _label("", &"Muted", true)
+	_game_note.add_theme_color_override("font_color", INK)
+	for label in [_game_state, _game_title, _game_note]:
+		art_box.add_child(label)
 
 	var side := VBoxContainer.new()
 	side.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	side.add_theme_constant_override("separation", 12)
 	row.add_child(side)
-	var library := _button("Open library", true)
-	library.pressed.connect(show_panel.bind("library"))
-	side.add_child(library)
+	_game_button = _button("", true)
+	_game_button.pressed.connect(func():
+		if _game.is_empty():
+			show_panel("library")
+		else:
+			resume_requested.emit())
+	side.add_child(_game_button)
 	var grid := GridContainer.new()
 	grid.columns = 2
 	grid.add_theme_constant_override("h_separation", 12)
@@ -291,7 +315,48 @@ func _build_game(body: Control) -> void:
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	side.add_child(spacer)
-	side.add_child(_label("Game details, screenshots and live performance arrive when the dashboard can run on top of a game.", &"Muted", true))
+	side.add_child(_label("Screenshots, recording, quitting and live performance aren't connected yet.", &"Muted", true))
+	set_game({})
+
+
+## Show the running game: {"id", "seconds"} from main.gd, or {} when nothing is running.
+func set_game(info: Dictionary) -> void:
+	var changed: bool = info.get("id", "") != _game.get("id", "")
+	_game = info
+	if info.is_empty():
+		_game_state.text = "NO GAME RUNNING"
+		_game_title.text = "GogglesXR"
+		_game_note.text = "Start a game from the Library panel, on the right."
+		_game_button.text = "Open library"
+		_game_art.texture = null
+		return
+	var seconds := int(info.get("seconds", 0))
+	var time := "%d h %d m" % [seconds / 3600, seconds / 60 % 60] if seconds >= 3600 else "%d min" % maxi(1, seconds / 60)
+	_game_state.text = "RUNNING  ·  " + time.to_upper()
+	_game_button.text = "Resume game"
+	if not changed:
+		return
+	var known := {}
+	for game in SteamLibrary.games() + SteamLibrary.all_games():
+		if str(game.get("id", "")) == str(info.id):
+			known = game
+			break
+	_game_title.text = str(known.get("name", "Game %s" % info.id))
+	_game_note.text = str(known.get("vr", "Running through GogglesXR"))
+	_game_art.texture = SteamLibrary.cover(str(known.get("art", "")), Vector2i(560, 560))
+
+
+func game_title() -> String:
+	return _game_title.text
+
+
+func game_state() -> String:
+	return _game_state.text
+
+
+func set_smoothing(amount: float) -> void:
+	if _smoothing_slider:
+		_smoothing_slider.set_value_no_signal(amount * 100.0)
 
 
 func _build_quick(body: Control) -> void:
@@ -414,7 +479,7 @@ func _build_settings(body: Control) -> void:
 	var group := ButtonGroup.new()
 	var sections := {
 		"Appearance": _settings_appearance, "Display": _settings_soon, "Streaming": _settings_soon,
-		"Audio": _settings_soon, "Controllers": _settings_soon, "Play area": _settings_soon, "About": _settings_about,
+		"Audio": _settings_soon, "Controllers": _settings_controllers, "Play area": _settings_soon, "About": _settings_about,
 	}
 	for section in sections:
 		var page := VBoxContainer.new()
@@ -437,6 +502,12 @@ func _settings_appearance(page: Control) -> void:
 	var scale_slider := _slider_row(page, "Size", 50, 160, 100)
 	scale_slider.value_changed.connect(func(v): scale_changed.emit(v / 100.0))
 	page.add_child(_label("To move the dashboard, hold grip on the status bar under the panel and point where you want it. While holding, push the stick forward to send it further away (bigger) or pull it back to bring it closer (smaller). Recentre puts it back in front of you.", &"Muted", true))
+
+
+func _settings_controllers(page: Control) -> void:
+	_smoothing_slider = _slider_row(page, "Pointer smoothing", 0, 100, 60)
+	_smoothing_slider.value_changed.connect(func(v): smoothing_changed.emit(v / 100.0))
+	page.add_child(_label("Steadies the laser. Higher values hold the pointer stiller on small buttons; 0 follows your hand exactly. Fast movements are never slowed down.", &"Muted", true))
 
 
 func _settings_soon(page: Control) -> void:
