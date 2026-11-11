@@ -10,7 +10,7 @@ Status key: ✅ done · 🔨 in progress · 📋 planned · ⚠️ limited / nee
 - Branding: boot splash, welcome screen, login, desktop, installer slides, About page
 - NVIDIA 580 (GTX 900–RTX 40) + Mesa (AMD/Intel), low-latency kernel options, gaming sysctls
 - Steam, OBS, Discord, GameMode, MangoHud, Protontricks, ProtonUp-Qt
-- Goggles VR Setup (SteamVR async-reprojection fix)
+- VR basics: Steam and headset udev rules. (The first builds also had a SteamVR setup helper; GogglesXR has replaced it)
 - Test tooling: Hyper-V VM script, QEMU script
 
 ## Phase 1 — Look & feel + VR setup 🔨 (current build)
@@ -23,7 +23,7 @@ Status key: ✅ done · 🔨 in progress · 📋 planned · ⚠️ limited / nee
 | Rounded corners | 🔨 | KDE-Rounded-Corners from its author's PPA (14 px corners, soft green outline on the active window). The PPA is rebuilt for each KWin update, so installed systems keep working |
 | Animations | 🔨 | Scale open/close, Magic Lamp minimise, sliding popups, 0.85× duration (Lite: 0.6×) |
 | Remove Kubuntu desktop links | 🔨 | |
-| SteamVR pre-installed | ⚠️ | **Not possible on the ISO.** SteamVR is only distributed through Steam and needs a Steam login. Instead: an **Install SteamVR** app and a prompt in Goggles VR Setup open Steam's installer (`steam://install/250820`) |
+| VR runtime | ✅ | GogglesXR is preinstalled and set up by the OS (see Phase 2). The earlier SteamVR-based setup (Install SteamVR, Goggles VR Setup) has been removed |
 
 ---
 
@@ -33,7 +33,7 @@ The headsets used for testing, and how each one reaches games.
 
 | Headset | Route | Phase | Status |
 |---|---|---|---|
-| HTC Vive (Vive wands, Index controllers) | SteamVR's own Lighthouse driver; udev rules from `steam-devices` | 0–1 | ✅ expected to work, needs a test pass on Goggles OS |
+| HTC Vive (Vive wands, Index controllers) | Planned through **GogglesXR** (Monado has a Lighthouse driver). Until then SteamVR can be installed from Steam by hand, with *Send SteamVR games to GogglesXR* switched off | 4 | 📋 ❓ wired headsets are not set up by Goggles OS yet |
 | Meta Quest 3 | **GogglesXR** streaming (Goggles Link) | 2 | 📋 |
 | Meta Quest 2 | **GogglesXR** streaming (Goggles Link) | 2 | 📋 |
 | Oculus Quest 1 | **GogglesXR** streaming, lower-resolution profile | 2 | 📋 Meta has ended Quest 1 updates, so the headset app must stay on toolchain/OpenXR versions that still run on it |
@@ -127,9 +127,10 @@ Pressing the dashboard button brings up one glass panel in front of you, with a 
 3. ✅ **Seamless setup (GogglesXR v0).** Tested on the test PC on 10 November 2026: games reach the headset with no launch options.
     The `gogglesxr` tool does automatically what took manual troubleshooting in the proof: it keeps the translator first for SteamVR games, lets Steam's game containers see the runtime for the whole session (no launch options), repairs itself when SteamVR changes the file, and reports each link of the chain in plain words. This version uses **WiVRn as its engine**, preinstalled with Goggles OS.
 4. **GogglesXR's own runtime build.** A Monado-based runtime packaged for Goggles OS under its own name, replacing the WiVRn Flatpak, with its own headset app.
-5. 🔨 **Dashboard v1.** Built in Godot (`gogglesxr/dashboard`, run with `gogglesxr dashboard`), in two stages:
+5. 🔨 **Dashboard v1 and desktop app.** The dashboard is built in Godot (`gogglesxr/dashboard`), in two stages:
    - **5a, as a normal VR app (in progress).** The five panels on a floating screen, lasers, trigger to click, stick to scroll, grip + swipe between panels, status strip. Working for real: Library (reads the installed Steam games and launches them), volume, recentre, dashboard size. Hold grip on the status bar to move the dashboard; while holding, the stick sends it further away (bigger) or closer (smaller), and its place is remembered. It runs when no game is running. First headset test on the test PC passed (10 November 2026).
-   - **5b, on top of a running game.** Needs the OpenXR overlay extension (`XR_EXTX_overlay`). Monado supports it; Godot does not yet (the only pull request, godotengine/godot#87522, is unfinished). Plan: a small native Godot extension that requests an overlay session, plus input hand-over from the runtime. Current Game, Desktop and the remaining settings come with this stage.
+   - **5b, on top of a running game (in progress).** Godot has no overlay support, so a small C extension (`gogglesxr/overlay-extension`) asks the runtime for an overlay session (`XR_EXTX_overlay`). Tested on Monado: the dashboard is drawn over another VR app with that app visible around it. The left controller's menu button shows and hides it. Needs its first test in the headset over a real game. Still to do: stop the game also receiving the buttons while the dashboard is open; Current Game details; the Desktop panel.
+   - **Desktop app (in progress).** `gogglesxr app`: status and one-press repair, a game library with Steam cover art and per-game choices (favourite, hide, treat as VR or not, display name), and settings. It starts at login in the system tray (can be switched off), keeps the runtime ready and opens the dashboard when a headset connects. The library detects each game's VR interface from its files and includes non-Steam games added to Steam.
 6. **Wi-Fi streaming** with pairing and automatic reconnect; the PC app with *Install to headset*.
 7. **Per-headset profiles, adaptive bitrate.**
 8. **Goggles Home.**

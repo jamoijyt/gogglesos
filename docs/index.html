@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Goggles OS</title>
-<meta name="description" content="Goggles OS is a Linux distro built for PC VR gaming: SteamVR-ready, tuned for NVIDIA and AMD, with a frosted-glass KDE Plasma desktop.">
+<meta name="description" content="Goggles OS is a Linux distro built for PC VR gaming: VR-ready with its own GogglesXR runtime, tuned for NVIDIA and AMD, with a frosted-glass KDE Plasma desktop.">
 <meta property="og:title" content="Goggles OS">
 <meta property="og:description" content="The Linux desktop built for PC VR gaming.">
 <meta property="og:image" content="images/screenshot-welcome.png">
@@ -362,7 +362,7 @@
         <span class="chip"><i></i>Early development</span>
         <img class="hero-logo" src="images/logo-dark.png" alt="Goggles OS">
         <h1 style="font-size:clamp(1.8rem,3.6vw,2.7rem)">The Linux desktop built for <span class="grad">PC VR gaming</span>.</h1>
-        <p class="lead">SteamVR-ready, tuned for NVIDIA and AMD graphics, with a frosted-glass KDE Plasma desktop. Based on Kubuntu 26.04 LTS.</p>
+        <p class="lead">VR-ready with GogglesXR, tuned for NVIDIA and AMD graphics, with a frosted-glass KDE Plasma desktop. Based on Kubuntu 26.04 LTS.</p>
         <div class="actions">
           <a class="btn primary" href="#download">Download</a>
           <a class="btn" href="#build">Build it yourself</a>
@@ -388,8 +388,8 @@
     <div class="grid c3">
       <div class="glass card feature tilt reveal">
         <div class="icon"><svg viewBox="0 0 24 24"><path d="M3 9a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v5a3 3 0 0 1-3 3h-3l-2-3h-2l-2 3H6a3 3 0 0 1-3-3z"/></svg></div>
-        <h3>SteamVR ready</h3>
-        <p>Steam and headset rules preinstalled. One click opens the SteamVR installer, and Goggles VR Setup applies the async-reprojection fix.</p>
+        <h3>GogglesXR built in</h3>
+        <p>Stream VR to a standalone headset and play your SteamVR games with no per-game setup. A dashboard inside the headset sits on top of your game.</p>
       </div>
       <div class="glass card feature tilt reveal">
         <div class="icon"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="10" rx="2"/><path d="M7 17v2M17 17v2M7 11h4M15 11h2"/></svg></div>
@@ -427,8 +427,9 @@
         <h3>VR</h3>
         <ul class="ticks">
           <li>Steam with <code>steam-devices</code> rules for Valve Index, HTC Vive, Quest and controllers</li>
-          <li><b>Install SteamVR</b>: opens Steam's installer in one click</li>
-          <li><b>Goggles VR Setup</b>: gives SteamVR's compositor the priority it needs for async reprojection</li>
+          <li><b>GogglesXR</b>: streams VR to standalone headsets such as the Meta Quest, and runs SteamVR games without per-game launch options</li>
+          <li><b>GogglesXR app</b>: status, a game library with cover art, and settings; starts at login</li>
+          <li><b>Dashboard in the headset</b>: five panels you swipe between, drawn on top of your game</li>
         </ul>
       </div>
       <div class="glass card tilt reveal">
@@ -436,7 +437,7 @@
         <ul class="ticks">
           <li>NVIDIA 580 with prebuilt, Secure Boot-signed modules: GTX 900 to RTX 40, including the GTX 1080</li>
           <li>Mesa and Vulkan (64- and 32-bit) for AMD and Intel</li>
-          <li>NVIDIA kernel mode-setting switched on for SteamVR direct mode and Wayland</li>
+          <li>NVIDIA kernel mode-setting switched on for VR and Wayland</li>
         </ul>
       </div>
       <div class="glass card tilt reveal">
@@ -484,7 +485,7 @@
           <tr><td>CPU</td><td>64-bit (x86-64)</td><td>6+ cores (e.g. Ryzen 5 / Core i5, 2019 or newer)</td></tr>
           <tr><td>Memory</td><td>8 GB</td><td>16 GB or more</td></tr>
           <tr><td>Graphics</td><td>Any GPU with a Mesa or NVIDIA 580 driver</td><td>NVIDIA GTX 1070 / AMD RX 5600 XT or better</td></tr>
-          <tr><td>Storage</td><td>32 GB</td><td>128 GB+ (SteamVR and VR games are large)</td></tr>
+          <tr><td>Storage</td><td>32 GB</td><td>128 GB+ (VR games are large)</td></tr>
           <tr><td>Firmware</td><td colspan="2">UEFI (Secure Boot on or off). Legacy BIOS boot also works.</td></tr>
           <tr><td>USB stick</td><td colspan="2">8 GB or larger to write the ISO</td></tr>
         </tbody>
@@ -548,7 +549,7 @@
         <p>Install to a separate drive, or shrink a partition in Windows' Disk Management first and use <b>Manual partitioning</b> in the installer. Turn off Windows Fast Startup if you'll share a drive. Back up important files before partitioning.</p>
       </li>
       <li><h3>After installing</h3>
-        <p>Open <b>Install SteamVR</b> from the start menu, launch SteamVR once, then run <b>Goggles VR Setup</b>.</p>
+        <p>Open <b>GogglesXR</b> from the start menu, connect your headset, then start a VR game from Steam or from the dashboard inside the headset.</p>
       </li>
     </ol>
     <p class="note">Goggles OS is in early development. Test in a virtual machine, or keep backups, before installing it on a PC you rely on.</p>
@@ -754,9 +755,9 @@ sudo apt install xorriso squashfs-tools imagemagick webp</pre></div>
 
   // ---- Headset picker (from "Target headsets" in ROADMAP.md)
   const HEADSETS = [
-    { name: "HTC Vive", tag: "Vive", status: "wip", label: "Expected to work",
-      how: "Uses SteamVR's own Lighthouse driver, with the headset rules already installed. Works with Vive wands and Index controllers.",
-      note: "Still needs a full test pass on Goggles OS.", phase: 1 },
+    { name: "HTC Vive", tag: "Vive", status: "plan", label: "Planned",
+      how: "Planned through GogglesXR, whose base (Monado) has a Lighthouse driver. Works with Vive wands and Index controllers.",
+      note: "Wired headsets are not set up by Goggles OS yet. Until then SteamVR can be installed from Steam by hand.", phase: 4 },
     { name: "Steam Frame", tag: "Frame", status: "research", label: "Needs verifying",
       how: "Streams with Valve's Steam Link over your normal Wi-Fi. The Steam Frame wireless adapter is optional; its Linux setup is still unreliable.",
       note: "Known problem: Steam Link VR currently crashes on GTX 10-series cards with the NVIDIA 580 driver. This is a SteamVR bug with no fix yet.", phase: 2 },
@@ -821,7 +822,7 @@ sudo apt install xorriso squashfs-tools imagemagick webp</pre></div>
       forWho: "GeForce GTX 900 series up to RTX 40 series",
       tags: ["GTX 900", "GTX 10", "RTX 20", "RTX 30", "RTX 40"],
       blurb: "The standard edition. It has the NVIDIA 580 driver with prebuilt, Secure Boot-signed modules, plus Mesa, so it also works on AMD and Intel. If you're unsure, pick this one.",
-      includes: ["NVIDIA 580 driver (GTX 900 to RTX 40, including the GTX 1080)", "Mesa and Vulkan for AMD and Intel", "32-bit graphics libraries for Steam and Proton", "Kernel mode-setting set up for SteamVR direct mode and Wayland"],
+      includes: ["NVIDIA 580 driver (GTX 900 to RTX 40, including the GTX 1080)", "Mesa and Vulkan for AMD and Intel", "32-bit graphics libraries for Steam and Proton", "Kernel mode-setting set up for VR and Wayland"],
       spec: [["Driver", "NVIDIA 580 + Mesa"], ["Secure Boot", "Yes, signed modules"], ["Build setting", "default"], ["Size", "Larger than AMD"]],
       icon: '<rect x="4" y="6" width="16" height="12" rx="2"/><path d="M8 10h8M8 14h5"/>' },
     { id: "open", name: "NVIDIA RTX 50", iso: "gogglesos-26.04-nvidia-amd64.iso",
@@ -903,11 +904,11 @@ sudo apt install xorriso squashfs-tools imagemagick webp</pre></div>
         ["done", "Branding", "Boot splash, welcome screen, login, desktop, installer slides, About page"],
         ["done", "Graphics and tuning", "NVIDIA 580 (GTX 900 to RTX 40) and Mesa, low-latency kernel options, gaming sysctls"],
         ["done", "Apps", "Steam, OBS, Discord, GameMode, MangoHud, Protontricks, ProtonUp-Qt"],
-        ["done", "Goggles VR Setup", "The SteamVR async-reprojection fix"],
+        ["done", "VR basics", "Steam and headset device rules"],
         ["done", "Test tooling", "Hyper-V VM script and QEMU script"],
       ] },
     { title: "Look & feel + VR setup", status: "wip", tag: "Current build",
-      goal: "The Goggles desktop: two looks to choose from, and a smoother path to SteamVR.",
+      goal: "The Goggles desktop: two looks to choose from, the Visor taskbar, and the first VR setup.",
       items: [
         ["wip", "Glass mode (default)", "Translucent, blurred windows and menus, floating panel, green accent"],
         ["wip", "Lite mode", "Opaque windows and panel, no blur, quicker animations"],
@@ -915,7 +916,7 @@ sudo apt install xorriso squashfs-tools imagemagick webp</pre></div>
         ["wip", "Rounded corners", "14 px corners with a soft green outline on the active window"],
         ["wip", "Animations", "Scale open/close, Magic Lamp minimise, sliding popups"],
         ["wip", "Remove Kubuntu desktop links", ""],
-        ["limited", "SteamVR preinstalled", "Not possible on the ISO: SteamVR only comes through Steam and needs a login. An Install SteamVR app opens Steam's installer instead"],
+        ["done", "VR runtime", "GogglesXR is preinstalled and set up by the OS; the earlier SteamVR-based setup has been removed"],
       ] },
     { title: "GogglesXR", status: "plan", long: "GogglesXR: Goggles OS's own VR runtime", link: ["dashboard/", "Try the dashboard prototype"],
       goal: "An OpenXR runtime for Goggles OS that streams to Quest headsets, runs SteamVR games, and has its own dashboard. It doesn't go through SteamVR's compositor. It's the biggest item on the roadmap.",
@@ -924,6 +925,8 @@ sudo apt install xorriso squashfs-tools imagemagick webp</pre></div>
         "SteamVR games run through an OpenVR-to-OpenXR translation layer, as they do with WiVRn",
         "Streaming to Quest 1, 2 and 3 over Wi-Fi or USB, with the headset app installed from the PC",
         "Five-panel dashboard: Current Game in the centre, Quick Settings above, Desktop below, Library right, Settings left",
+        "The dashboard is drawn on top of your game; the menu button shows and hides it",
+        "Desktop app with a cover-art game library, starting at login",
         "Hold grip and swipe the panel like a card to move between them",
         "Preinstalled, with nothing to set up on the PC",
       ],

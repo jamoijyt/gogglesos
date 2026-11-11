@@ -62,7 +62,6 @@ fi
 mv "$STATE/overlay-files.new" "$STATE/overlay-files"
 sed -i "s|@KERNEL_CMDLINE_EXTRA@|$KERNEL_CMDLINE_EXTRA|" /etc/default/grub.d/90-gogglesos.cfg
 sed -i "s|@DISTRO_URL@|$DISTRO_URL|" /etc/xdg/kcm-about-distrorc
-chmod 755 /usr/local/bin/goggles-vr-setup
 
 log "Branding: os-release / lsb-release"
 for f in /usr/lib/os-release /etc/lsb-release; do
@@ -330,7 +329,6 @@ for d in org.kfocus.web.howtos org.kubuntu.web.home org.kubuntu.restore-desktop-
   printf '[Desktop Entry]\nType=Application\nName=%s\nNoDisplay=true\nHidden=true\n' "$d" \
     > /usr/local/share/applications/$d.desktop
 done
-chmod 755 /usr/local/bin/goggles-vr-setup
 
 log "Branding: login screen (SDDM)"
 # Goggles login theme (chroot/sddm-theme): plain QtQuick, no extra dependencies
@@ -378,7 +376,9 @@ XR_DASH=/usr/share/$DISTRO_ID/gogglesxr-dashboard
 if [ -f "$G/gogglesxr/dashboard/project.godot" ]; then
   rm -rf "${XR_DASH:?}"; mkdir -p "$XR_DASH"
   install -m644 "$G"/gogglesxr/dashboard/project.godot "$G"/gogglesxr/dashboard/*.tscn "$G"/gogglesxr/dashboard/*.gd \
-    "$G"/gogglesxr/dashboard/*.tres "$G"/gogglesxr/dashboard/*.uid "$XR_DASH/"
+    "$G"/gogglesxr/dashboard/*.tres "$G"/gogglesxr/dashboard/*.uid "$G"/gogglesxr/dashboard/*.gdextension "$XR_DASH/"
+  # The overlay extension (source in gogglesxr/overlay-extension) lets it draw on top of games
+  install -D -m755 -t "$XR_DASH/bin" "$G"/gogglesxr/dashboard/bin/*.so
 else
   warn "GogglesXR dashboard sources missing"
 fi

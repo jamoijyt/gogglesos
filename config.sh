@@ -52,6 +52,7 @@ APT_PACKAGES=(
   papirus-icon-theme                            # default icons (green folders)
   open-vm-tools open-vm-tools-desktop           # VMware guest tools (resize, clipboard)
   software-properties-common
+  python3-pyqt6                                 # the GogglesXR desktop app
   fastfetch                                     # system info with the Goggles logo (/etc/xdg/fastfetch)
 )
 

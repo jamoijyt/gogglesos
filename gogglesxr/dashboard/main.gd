@@ -10,8 +10,10 @@ extends Node3D
 ## right mouse (hold and drag) = grip, mouse wheel = stick, arrow keys = change panel.
 ## Where you leave the dashboard is remembered (user://dashboard.cfg).
 ##
-## This first version is a normal VR app. Running on top of a game needs the OpenXR overlay
-## extension, which Godot doesn't have yet; that is the next step.
+## Started with GOGGLESXR_OVERLAY=1 it runs as an overlay: the runtime draws it on top of
+## whatever VR game is running (through the small extension in ../overlay-extension, since
+## Godot has no overlay support of its own). In that mode the menu button on the left
+## controller shows and hides it. Without the variable it is a normal VR app.
 
 const DashboardUI := preload("res://dashboard_ui.gd")
 const SteamLibrary := preload("res://steam_library.gd")
@@ -29,6 +31,9 @@ var viewport: SubViewport
 var screen: MeshInstance3D
 var camera: XRCamera3D
 var xr_active := false
+var overlay := false                      # drawn on top of a running game (needs the overlay extension)
+var shown := true                         # overlay mode: the menu button shows and hides the dashboard
+var menu_was_down := false
 var centre := Vector3(0, SCREEN_HEIGHT_ABOVE_FLOOR, -REFERENCE_DISTANCE)   # where the dashboard floats
 var size_factor := 1.0                    # the Size setting
 var moving := false                       # grip held on the status bar
@@ -36,6 +41,7 @@ var move_local := Vector3.ZERO            # the grabbed spot, in the screen's ow
 var move_reach := 1.0                     # how far along the laser the grabbed spot is
 var ray_from := Vector3.ZERO              # the pointing ray of the active hand (or the mouse)
 var ray_dir := Vector3.FORWARD
+var origin_node: XROrigin3D
 var hands := {}                           # "left"/"right" -> {controller, laser, dot, trigger, grip}
 var active_hand := "right"
 var pointer := Vector2(-1, -1)            # last pointer position on the dashboard, in its pixels
@@ -57,6 +63,7 @@ func _ready() -> void:
 	ui.scale_changed.connect(func(f): size_factor = f; _apply_screen(); _save_place())
 
 	var origin := XROrigin3D.new()
+	origin_node = origin
 	add_child(origin)
 	camera = XRCamera3D.new()
 	camera.position = Vector3(0, SCREEN_HEIGHT_ABOVE_FLOOR, 0)
@@ -85,10 +92,53 @@ func _ready() -> void:
 	else:
 		centre = Vector3(0, SCREEN_HEIGHT_ABOVE_FLOOR, -0.8)     # closer, so it fills the preview window
 		ui.set_status("No headset found, so this is the desktop preview. Start the runtime (gogglesxr start), connect the headset and run the dashboard again.")
+	overlay = OS.get_environment("GOGGLESXR_OVERLAY_ACTIVE") == "1"
+	if OS.get_environment("GOGGLESXR_OVERLAY") != "" and not overlay and OS.get_environment("GOGGLESXR_SELFTEST") == "":
+		# Asked to sit on top of a game, but there is no headset session to do that in
+		push_warning("GogglesXR dashboard: no overlay session (no headset connected, or the runtime lacks XR_EXTX_overlay)")
+		get_tree().quit(3)
+		return
+	print("GogglesXR dashboard: ", "in the headset" if xr_active else "desktop preview", ", as an overlay on top of games" if overlay else "")
+	if overlay:
+		_setup_overlay()
 	if xr_active and not _load_place():
 		_reset_place()
 	_apply_screen()
 	_debug_hooks()
+
+
+# ------------------------------------------------------------------ overlay
+## Make everything except the dashboard see-through, so the game shows around it.
+func _setup_overlay() -> void:
+	get_viewport().transparent_bg = true
+	# Godot only tells the runtime to blend our picture by its transparency when another
+	# layer sits underneath it. This one is a single clear pixel behind you.
+	var clear_view := SubViewport.new()
+	clear_view.size = Vector2i(2, 2)
+	clear_view.transparent_bg = true
+	clear_view.render_target_update_mode = SubViewport.UPDATE_ONCE
+	add_child(clear_view)
+	var under := OpenXRCompositionLayerQuad.new()
+	under.layer_viewport = clear_view
+	under.quad_size = Vector2(0.01, 0.01)
+	under.sort_order = -1
+	under.alpha_blend = true
+	under.position = Vector3(0, -50, 50)
+	origin_node.add_child(under)
+	ui.say("Menu button: show or hide the dashboard")
+
+
+func _set_shown(on: bool) -> void:
+	shown = on
+	screen.visible = on
+	if not on:
+		ui.swipe_end()
+		_move_end()
+		if mouse_buttons != 0:
+			_send_button(MOUSE_BUTTON_LEFT, false)
+		for side in hands:
+			hands[side].laser.visible = false
+			hands[side].dot.visible = false
 
 
 # ------------------------------------------------------------------ scene
@@ -282,6 +332,16 @@ func _process(delta: float) -> void:
 	if not xr_active:
 		return
 	scroll_wait = maxf(0.0, scroll_wait - delta)
+	if overlay:
+		var menu := false
+		for side in hands:
+			var c: XRController3D = hands[side].controller
+			menu = menu or (c.get_has_tracking_data() and c.is_button_pressed(&"menu_button"))
+		if menu and not menu_was_down:
+			_set_shown(not shown)
+		menu_was_down = menu
+		if not shown:
+			return
 	for side in hands:
 		var hand: Dictionary = hands[side]
 		var controller: XRController3D = hand.controller
@@ -371,11 +431,14 @@ func _unhandled_input(event: InputEvent) -> void:
 # ------------------------------------------------------------------ testing hooks
 ## GOGGLESXR_PANEL=library       open on a given panel
 ## GOGGLESXR_SHOT=/path/out.png  save a picture of the window after a moment, then quit
+## GOGGLESXR_TEST_BG=1           fill the background with a loud colour (to stand in for a game)
 ## GOGGLESXR_SELFTEST=1          drive the dashboard through its pointer code, print results, quit
 func _debug_hooks() -> void:
 	var start_panel := OS.get_environment("GOGGLESXR_PANEL")
 	if DashboardUI.POS.has(start_panel):
 		ui.show_panel(start_panel, false)
+	if OS.get_environment("GOGGLESXR_TEST_BG") != "":
+		RenderingServer.set_default_clear_color(Color(0.75, 0.1, 0.45))
 	if OS.get_environment("GOGGLESXR_SELFTEST") != "":
 		_selftest.call_deferred()
 	elif OS.get_environment("GOGGLESXR_SHOT") != "":
@@ -475,6 +538,7 @@ func _selftest() -> void:
 	centre = Vector3.ZERO
 	check.call("position is remembered", not moving and _load_place() and centre.distance_to(kept) < 0.001, str(centre))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(SETTINGS_FILE))
-	print("games found: ", SteamLibrary.installed_games().size())
+	print("games found: ", SteamLibrary.installed_games().size(), ", in the Library panel: ", SteamLibrary.games().size(),
+			", with cover art: ", SteamLibrary.games().filter(func(g): return SteamLibrary.cover(str(g.get("art", "")), Vector2i(216, 300)) != null).size())
 	print("SELFTEST " + ("OK" if failures == 0 else "FAILED (%d)" % failures))
 	get_tree().quit(failures)

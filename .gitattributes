@@ -7,3 +7,4 @@
 *.webp binary
 *.svgz binary
 *.tar.gz binary
+*.so binary

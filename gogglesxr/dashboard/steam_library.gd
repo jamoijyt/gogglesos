@@ -48,8 +48,53 @@ static func installed_games() -> Array[Dictionary]:
 	return games
 
 
-static func launch(app_id: String) -> bool:
-	return OS.create_process("steam", ["steam://rungameid/" + app_id]) > 0
+## The list prepared by the GogglesXR app (gogglesxr dashboard writes it): VR games only,
+## hidden ones left out, favourites first, with cover art. Empty if it isn't there.
+static func prepared_games() -> Array[Dictionary]:
+	var cache := OS.get_environment("XDG_CACHE_HOME")
+	if cache == "":
+		cache = OS.get_environment("HOME").path_join(".cache")
+	var file := FileAccess.open(cache.path_join("gogglesxr/library.json"), FileAccess.READ)
+	var games: Array[Dictionary] = []
+	if file == null:
+		return games
+	var data: Variant = JSON.parse_string(file.get_as_text())
+	if not (data is Dictionary and data.get("games") is Array):
+		return games
+	for item in data.games:
+		if item is Dictionary and item.has("name") and item.has("launch"):
+			games.append(item)
+	return games
+
+
+## Games for the Library panel: the prepared list, or everything Steam has installed.
+static func games() -> Array[Dictionary]:
+	var prepared := prepared_games()
+	if not prepared.is_empty():
+		return prepared
+	var games: Array[Dictionary] = []
+	for game in installed_games():
+		games.append({"id": game.id, "name": game.name, "launch": "steam://rungameid/" + game.id, "art": "", "favourite": false})
+	return games
+
+
+static func launch(url: String) -> bool:
+	return url.begins_with("steam://") and OS.create_process("steam", [url]) > 0
+
+
+## Cover art as a texture, or null. `size` is the card's picture size in pixels.
+static func cover(path: String, size: Vector2i) -> Texture2D:
+	if path == "" or not FileAccess.file_exists(path):
+		return null
+	var image := Image.load_from_file(path)
+	if image == null or image.is_empty():
+		return null
+	# Fill the card: scale to cover it, then cut off what sticks out
+	var scale := maxf(float(size.x) / image.get_width(), float(size.y) / image.get_height())
+	image.resize(maxi(size.x, int(ceil(image.get_width() * scale))), maxi(size.y, int(ceil(image.get_height() * scale))), Image.INTERPOLATE_LANCZOS)
+	var cut := Image.create_empty(size.x, size.y, false, image.get_format())
+	cut.blit_rect(image, Rect2i((image.get_width() - size.x) / 2, (image.get_height() - size.y) / 2, size.x, size.y), Vector2i.ZERO)
+	return ImageTexture.create_from_image(cut)
 
 
 static func _add(list: Array[String], path: String) -> void:

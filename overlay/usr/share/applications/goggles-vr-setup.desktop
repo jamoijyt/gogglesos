@@ -1,7 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Goggles VR Setup
-Comment=Apply SteamVR performance fixes (run after installing or updating SteamVR)
-Exec=goggles-vr-setup
-Icon=gogglesos
-Categories=Game;Settings;

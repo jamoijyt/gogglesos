@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=GogglesXR
+Comment=Keeps VR ready in the background (switch off in GogglesXR > Settings)
+Exec=gogglesxr app --background
+Icon=gogglesos
+X-KDE-autostart-phase=2
+X-GNOME-Autostart-enabled=true
