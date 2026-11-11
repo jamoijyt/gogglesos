@@ -13,6 +13,9 @@ const SteamLibrary := preload("res://steam_library.gd")
 
 signal recentre_requested
 signal resume_requested
+signal screenshot_requested
+signal record_requested
+signal quit_requested
 signal smoothing_changed(amount: float)
 signal scale_changed(factor: float)
 
@@ -53,6 +56,9 @@ var _game_title: Label
 var _game_note: Label
 var _game_art: TextureRect
 var _game_button: Button
+var _record_button: Button
+var _quit_button: Button
+var _quit_armed_until := 0
 var _smoothing_slider: HSlider
 var _tween: Tween
 # swipe state
@@ -308,15 +314,43 @@ func _build_game(body: Control) -> void:
 	grid.add_theme_constant_override("v_separation", 12)
 	side.add_child(grid)
 	var recentre := _button("Recentre")
-	recentre.pressed.connect(func(): recentre_requested.emit(); say("View recentred"))
+	recentre.pressed.connect(func(): recentre_requested.emit())
 	grid.add_child(recentre)
-	for text in ["Screenshot", "Record clip", "Quit game"]:
-		grid.add_child(_soon(_button(text)))
+	var shot := _button("Screenshot")
+	shot.pressed.connect(func(): screenshot_requested.emit())
+	grid.add_child(shot)
+	_record_button = _button("Record clip")
+	_record_button.pressed.connect(func(): record_requested.emit())
+	grid.add_child(_record_button)
+	_quit_button = _button("Quit game")
+	_quit_button.pressed.connect(_quit_pressed)
+	grid.add_child(_quit_button)
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	side.add_child(spacer)
-	side.add_child(_label("Screenshots, recording, quitting and live performance aren't connected yet.", &"Muted", true))
+	side.add_child(_label("Screenshots and recordings capture the game's window on the desktop and are saved to Pictures/GogglesXR and Videos/GogglesXR.", &"Muted", true))
 	set_game({})
+	set_recording(false)
+
+
+## Quitting takes two presses, so a stray trigger pull can't close your game.
+func _quit_pressed() -> void:
+	if Time.get_ticks_msec() < _quit_armed_until:
+		_quit_armed_until = 0
+		_quit_button.text = "Quit game"
+		quit_requested.emit()
+		return
+	_quit_armed_until = Time.get_ticks_msec() + 3000
+	_quit_button.text = "Press again to quit"
+	await get_tree().create_timer(3.0).timeout
+	if _quit_armed_until != 0 and Time.get_ticks_msec() >= _quit_armed_until:
+		_quit_armed_until = 0
+		_quit_button.text = "Quit game"
+
+
+func set_recording(on: bool) -> void:
+	_record_button.text = "Stop recording" if on else "Record clip"
+	_record_button.theme_type_variation = &"Primary" if on else &""
 
 
 ## Show the running game: {"id", "seconds"} from main.gd, or {} when nothing is running.
@@ -329,7 +363,11 @@ func set_game(info: Dictionary) -> void:
 		_game_note.text = "Start a game from the Library panel, on the right."
 		_game_button.text = "Open library"
 		_game_art.texture = null
+		_quit_button.disabled = true
+		_quit_button.modulate.a = 0.45
 		return
+	_quit_button.disabled = false
+	_quit_button.modulate.a = 1.0
 	var seconds := int(info.get("seconds", 0))
 	var time := "%d h %d m" % [seconds / 3600, seconds / 60 % 60] if seconds >= 3600 else "%d min" % maxi(1, seconds / 60)
 	_game_state.text = "RUNNING  ·  " + time.to_upper()

@@ -19,6 +19,10 @@ does the setup that otherwise has to be done by hand:
                       otherwise in a preview window). --overlay draws it on top of the
                       running game; the menu button shows and hides it
   gogglesxr library   list the installed games and whether they can run in VR (--json)
+  gogglesxr screenshot  save a picture of the game's window to Pictures/GogglesXR
+  gogglesxr record    start recording the screen, or stop and save (Videos/GogglesXR)
+  gogglesxr recenter  make the way you are facing the new "forward" for the game
+  gogglesxr quit-game close the VR game that is running
   gogglesxr app       open the GogglesXR desktop app (--background: tray icon only)
   gogglesxr           open the desktop app (menu entry)
 """
@@ -27,8 +31,10 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
+import time
 import urllib.request
 import zipfile
 
@@ -422,6 +428,214 @@ def app(args):
     return desktop_app.main(args)
 
 
+# ------------------------------------------------------------------ in-game actions
+# Used by the dashboard's Current Game panel. Each prints one line saying what happened.
+RECORD_STATE = os.path.join(RUNTIME_DIR, "gogglesxr-recording")
+
+
+def _user_dir(kind, fallback):
+    """The user's Pictures or Videos folder, with a GogglesXR folder inside it."""
+    base = ""
+    try:
+        base = subprocess.run(["xdg-user-dir", kind], capture_output=True, text=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if not base or base == HOME:
+        base = os.path.join(HOME, fallback)
+    path = os.path.join(base, "GogglesXR")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _capture_name(game):
+    safe = "".join(c for c in (game or "Desktop") if c.isalnum() or c in " -_").strip() or "Game"
+    return f"{safe} {time.strftime('%Y-%m-%d %H.%M.%S')}"
+
+
+def running_game():
+    """(pid of Steam's launcher for the running game, app id), or (None, None)."""
+    for path in glob.glob("/proc/[0-9]*/cmdline"):
+        try:
+            with open(path, "rb") as f:
+                args = f.read().split(b"\0")
+        except OSError:
+            continue
+        if b"SteamLaunch" in args:
+            for arg in args:
+                if arg.startswith(b"AppId="):
+                    return int(path.split("/")[2]), arg[6:].decode(errors="replace")
+    return None, None
+
+
+def _game_title(app_id):
+    try:
+        for game in load_library().games():
+            if game["id"] == app_id:
+                return game["title"]
+    except Exception:
+        pass
+    return None
+
+
+def screenshot():
+    """Spectacle (KDE's screenshot tool) grabs the active window, which is the game's own
+    window on the desktop. This is the game's desktop view, not the picture inside the headset."""
+    if not shutil.which("spectacle"):
+        print("Screenshots need Spectacle (sudo apt install kde-spectacle)")
+        return 1
+    _, app_id = running_game()
+    out = os.path.join(_user_dir("PICTURES", "Pictures"), _capture_name(_game_title(app_id)) + ".png")
+    for mode in ("-a", "-f"):                  # the active window, else the whole desktop
+        try:
+            subprocess.run(["spectacle", "-b", "-n", mode, "-o", out], timeout=20,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if os.path.isfile(out) and os.path.getsize(out) > 0:
+            print("Screenshot saved to " + os.path.relpath(out, HOME))
+            return 0
+    print("Couldn't take a screenshot")
+    return 1
+
+
+def recording():
+    try:
+        with open(RECORD_STATE, encoding="utf-8") as f:
+            pid, path = f.read().split("\n", 1)
+        os.kill(int(pid), 0)
+        return int(pid), path.strip()
+    except (OSError, ValueError):
+        try:
+            os.remove(RECORD_STATE)
+        except OSError:
+            pass
+        return None, None
+
+
+def record():
+    """Start a screen recording with Spectacle, or finish the one in progress."""
+    pid, path = recording()
+    if pid:
+        # Starting Spectacle again while it records finishes the recording; ask it directly too
+        try:
+            subprocess.run(["spectacle", "-b", "-n", "-R", "s"], timeout=10,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        for wait in range(40):
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                break
+            if wait == 20:
+                os.kill(pid, signal.SIGINT)
+            time.sleep(0.25)
+        try:
+            os.remove(RECORD_STATE)
+        except OSError:
+            pass
+        if os.path.isfile(path) and os.path.getsize(path) > 0:
+            print("Recording saved to " + os.path.relpath(path, HOME))
+            return 0
+        print("The recording stopped, but no video was saved")
+        return 1
+    if not shutil.which("spectacle"):
+        print("Recording needs Spectacle (sudo apt install kde-spectacle)")
+        return 1
+    _, app_id = running_game()
+    path = os.path.join(_user_dir("VIDEOS", "Videos"), _capture_name(_game_title(app_id)) + ".webm")
+    try:
+        process = subprocess.Popen(["spectacle", "-b", "-n", "-R", "s", "-o", path], start_new_session=True,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as e:
+        print(f"Couldn't start recording ({e})")
+        return 1
+    time.sleep(1.0)
+    if process.poll() is not None:
+        print("Couldn't start recording")
+        return 1
+    with open(RECORD_STATE, "w", encoding="utf-8") as f:
+        f.write(f"{process.pid}\n{path}\n")
+    print("Recording the screen")
+    return 0
+
+
+def _descendants(root):
+    children = {}
+    for path in glob.glob("/proc/[0-9]*/stat"):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                fields = f.read().rsplit(")", 1)[1].split()
+            children.setdefault(int(fields[1]), []).append(int(path.split("/")[2]))
+        except (OSError, IndexError, ValueError):
+            continue
+    found, todo = [], [root]
+    while todo:
+        for child in children.get(todo.pop(), []):
+            found.append(child)
+            todo.append(child)
+    return found
+
+
+def quit_game():
+    """Close the running game: ask every process Steam started for it to stop, then insist."""
+    pid, app_id = running_game()
+    if pid is None:
+        print("No game is running")
+        return 1
+    title = _game_title(app_id) or "the game"
+    targets = _descendants(pid)
+    for sig, patience in ((signal.SIGTERM, 4.0), (signal.SIGKILL, 2.0)):
+        for target in targets:
+            try:
+                os.kill(target, sig)
+            except OSError:
+                pass
+        deadline = time.time() + patience
+        while time.time() < deadline and os.path.exists(f"/proc/{pid}"):
+            time.sleep(0.2)
+        if not os.path.exists(f"/proc/{pid}"):
+            break
+        targets = _descendants(pid) or [pid]
+    print(f"Closed {title}" if not os.path.exists(f"/proc/{pid}") else f"Couldn't close {title}")
+    return 0 if not os.path.exists(f"/proc/{pid}") else 1
+
+
+def recenter():
+    """Tell the VR runtime to make the current head position and direction the new centre.
+    This moves the game's world, which a VR app can't do for another app by itself."""
+    import ctypes
+    manifest = os.path.realpath(ACTIVE_RUNTIME)
+    lib = None
+    try:
+        with open(manifest, encoding="utf-8") as f:
+            runtime = json.load(f)["runtime"]
+        lib = runtime.get("MND_libmonado_path")
+        if lib:
+            lib = os.path.normpath(os.path.join(os.path.dirname(manifest), lib))
+    except (OSError, ValueError, KeyError):
+        pass
+    if not lib or not os.path.isfile(lib):
+        print("Can't recentre the game: the VR runtime isn't running")
+        return 1
+    try:
+        monado = ctypes.CDLL(lib)
+        root = ctypes.c_void_p()
+        monado.mnd_root_create.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
+        monado.mnd_root_recenter_local_spaces.argtypes = [ctypes.c_void_p]
+        monado.mnd_root_destroy.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
+        if monado.mnd_root_create(ctypes.byref(root)) != 0:
+            print("Can't recentre the game: no headset is connected")
+            return 1
+        result = monado.mnd_root_recenter_local_spaces(root)
+        monado.mnd_root_destroy(ctypes.byref(root))
+    except (OSError, AttributeError) as e:
+        print(f"Can't recentre the game: {e}")
+        return 1
+    print("View recentred" if result == 0 else "The VR runtime couldn't recentre the game")
+    return 0 if result == 0 else 1
+
+
 def gui():
     if not shutil.which("kdialog"):
         return status()
@@ -457,7 +671,8 @@ def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "app"
     actions = {"on": turn_on, "off": turn_off, "status": status, "fix": fix, "start": start, "--gui": gui,
                "dashboard": lambda: dashboard(sys.argv[2:]), "library": lambda: library_command(sys.argv[2:]),
-               "app": lambda: app(sys.argv[2:])}
+               "app": lambda: app(sys.argv[2:]), "screenshot": screenshot, "record": record,
+               "quit-game": quit_game, "recenter": recenter, "recentre": recenter}
     if cmd not in actions:
         print(__doc__.strip(), file=sys.stderr)
         return 2

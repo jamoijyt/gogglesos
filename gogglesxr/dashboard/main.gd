@@ -6,6 +6,7 @@ extends Node3D
 ##                  hold grip and move the laser = swipe the panel.
 ##                  Hold grip on the status bar = move the dashboard; while holding, push the
 ##                  stick forward or back to send it further away (bigger) or closer (smaller).
+##                  Your controllers are drawn as models while the dashboard is open.
 ## Without a headset it runs in a window for testing: left mouse = trigger,
 ## right mouse (hold and drag) = grip, mouse wheel = stick, arrow keys = change panel.
 ## Where you leave the dashboard is remembered (user://dashboard.cfg).
@@ -38,6 +39,7 @@ var open_tween: Tween
 var smoothing := 0.6                      # pointer smoothing, 0 (off) to 1 (strongest)
 var animations := true
 var game_thread: Thread                   # looks up the running game without holding up a frame
+var tool_jobs: Array[Thread] = []         # gogglesxr commands started from the dashboard
 var game_wait := 0.0
 var menu_was_down := false
 var centre := Vector3(0, SCREEN_HEIGHT_ABOVE_FLOOR, -REFERENCE_DISTANCE)   # where the dashboard floats
@@ -67,6 +69,9 @@ func _ready() -> void:
 	viewport.add_child(ui)
 	ui.recentre_requested.connect(_recentre)
 	ui.resume_requested.connect(func(): if overlay: _set_shown(false))
+	ui.screenshot_requested.connect(func(): _run_tool("screenshot"))
+	ui.record_requested.connect(func(): _run_tool("record"))
+	ui.quit_requested.connect(func(): ui.say("Closing the game…"); _run_tool("quit-game"))
 	ui.smoothing_changed.connect(func(v): smoothing = v; _save_prefs())
 	_load_prefs()
 	ui.set_smoothing(smoothing)
@@ -75,6 +80,18 @@ func _ready() -> void:
 	var origin := XROrigin3D.new()
 	origin_node = origin
 	add_child(origin)
+	# Light for the controller models (the dashboard and lasers are unshaded and ignore it)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-50, 25, 0)
+	sun.light_energy = 1.3
+	add_child(sun)
+	var world := WorldEnvironment.new()
+	world.environment = Environment.new()
+	world.environment.background_mode = Environment.BG_CLEAR_COLOR
+	world.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	world.environment.ambient_light_color = Color(0.55, 0.7, 0.65)
+	world.environment.ambient_light_energy = 0.6
+	add_child(world)
 	camera = XRCamera3D.new()
 	camera.position = Vector3(0, SCREEN_HEIGHT_ABOVE_FLOOR, 0)
 	origin.add_child(camera)
@@ -124,6 +141,10 @@ func _ready() -> void:
 ## Make everything except the dashboard see-through, so the game shows around it.
 func _setup_overlay() -> void:
 	get_viewport().transparent_bg = true
+	# Keep our own desktop window out of the way: the game's window stays the active one,
+	# which is also what Screenshot captures
+	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_NO_FOCUS, true)
+	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MINIMIZED)
 	# Godot only tells the runtime to blend our picture by its transparency when another
 	# layer sits underneath it. This one is a single clear pixel behind you.
 	var clear_view := SubViewport.new()
@@ -265,6 +286,8 @@ func _parse_game(text: String) -> Dictionary:
 func _exit_tree() -> void:
 	if game_thread:
 		game_thread.wait_to_finish()
+	for job in tool_jobs:
+		job.wait_to_finish()
 
 
 # ------------------------------------------------------------------ scene
@@ -296,8 +319,164 @@ func _make_hand(origin: XROrigin3D, side: String) -> Dictionary:
 	dot.material_override = bright
 	dot.visible = false
 	add_child(dot)
+	# A second pose for the same hand: where the controller is held, for drawing its model
+	var held := XRController3D.new()
+	held.tracker = controller.tracker
+	held.pose = &"grip"
+	origin.add_child(held)
 	return {"controller": controller, "laser": laser, "dot": dot, "trigger": false, "grip": false,
-			"from": Vector3.ZERO, "dir": Vector3.ZERO}
+			"from": Vector3.ZERO, "dir": Vector3.ZERO, "held": held, "model": null, "profile": "?", "side": side}
+
+
+# ------------------------------------------------------------------ controller models
+## Drawn while the dashboard is open, so you can see your hands over the game. These are
+## Goggles-styled stand-ins built from simple shapes, chosen by the kind of controller the
+## runtime reports. They are not the manufacturers' own models.
+const BODY := Color(0.2, 0.31, 0.28)
+
+func _controller_kind(profile: String) -> String:
+	if profile.contains("touch_controller_plus") or profile.contains("touch_plus") or profile.contains("touch_controller_pro") or profile.contains("touch_pro"):
+		return "touch_plus"               # Quest 3 / Pro: no tracking ring
+	if profile.contains("touch"):
+		return "touch"                    # Quest 1 / 2, Rift: tracking ring
+	if profile.contains("index"):
+		return "index"
+	if profile.contains("vive"):
+		return "wand"
+	return "generic"
+
+
+func _part(parent: Node3D, mesh: Mesh, at: Vector3, colour: Color, turn := Vector3.ZERO, glow := false) -> MeshInstance3D:
+	var part := MeshInstance3D.new()
+	part.mesh = mesh
+	part.position = at
+	part.rotation_degrees = turn
+	var material := StandardMaterial3D.new()
+	material.albedo_color = colour
+	if glow:
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	else:
+		material.metallic = 0.2
+		material.roughness = 0.55
+		material.emission_enabled = true
+		material.emission = colour * 0.3       # never fully dark, whatever the lighting
+	part.material_override = material
+	parent.add_child(part)
+	return part
+
+
+func _capsule(radius: float, length: float) -> CapsuleMesh:
+	var mesh := CapsuleMesh.new()
+	mesh.radius = radius
+	mesh.height = length
+	return mesh
+
+
+func _disc(radius: float, height: float) -> CylinderMesh:
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = radius
+	mesh.bottom_radius = radius
+	mesh.height = height
+	return mesh
+
+
+func _ring(radius: float, thickness: float) -> TorusMesh:
+	var mesh := TorusMesh.new()
+	mesh.inner_radius = radius - thickness
+	mesh.outer_radius = radius + thickness
+	return mesh
+
+
+func _slab(size: Vector3) -> BoxMesh:
+	var mesh := BoxMesh.new()
+	mesh.size = size
+	return mesh
+
+
+## In the grip pose the handle runs along Z, with -Z pointing forward out of the hand.
+func _make_controller_model(kind: String, side: String) -> Node3D:
+	var model := Node3D.new()
+	var mirror := -1.0 if side == "left" else 1.0     # buttons sit towards the other hand
+	var dim := Color(DashboardUI.ACCENT, 1.0) * 0.35
+	var lights := {}
+	if kind == "wand":
+		_part(model, _capsule(0.019, 0.19), Vector3(0, -0.01, 0.05), BODY, Vector3(90, 0, 0))
+		_part(model, _ring(0.05, 0.012), Vector3(0, 0.03, -0.075), BODY, Vector3(-30, 0, 0))
+		lights["primary"] = _part(model, _disc(0.021, 0.004), Vector3(0, 0.012, -0.005), dim, Vector3.ZERO, true)
+		lights["trigger"] = _part(model, _slab(Vector3(0.018, 0.02, 0.03)), Vector3(0, -0.035, -0.025), dim, Vector3(20, 0, 0), true)
+		lights["grip"] = _part(model, _slab(Vector3(0.042, 0.012, 0.035)), Vector3(0, -0.012, 0.07), dim, Vector3.ZERO, true)
+	else:
+		_part(model, _capsule(0.018, 0.115), Vector3(0, -0.012, 0.035), BODY, Vector3(72, 0, 0))
+		var head := _part(model, _disc(0.028, 0.024), Vector3(0, 0.004, -0.026), BODY, Vector3(-18, 0, 0))
+		lights["primary"] = _part(head, _disc(0.009, 0.012), Vector3(-0.009 * mirror, 0.014, 0.004), dim, Vector3.ZERO, true)
+		lights["ax_button"] = _part(head, _disc(0.0055, 0.004), Vector3(0.012 * mirror, 0.012, 0.008), dim, Vector3.ZERO, true)
+		lights["by_button"] = _part(head, _disc(0.0055, 0.004), Vector3(0.007 * mirror, 0.012, -0.008), dim, Vector3.ZERO, true)
+		lights["trigger"] = _part(model, _slab(Vector3(0.016, 0.022, 0.026)), Vector3(0, -0.012, -0.052), dim, Vector3(25, 0, 0), true)
+		lights["grip"] = _part(model, _slab(Vector3(0.008, 0.02, 0.034)), Vector3(-0.019 * mirror, -0.022, 0.03), dim, Vector3(72, 0, 0), true)
+		if kind == "touch":
+			_part(model, _ring(0.05, 0.006), Vector3(0, 0.03, -0.05), BODY, Vector3(-60, 0, 0))
+		elif kind == "index":
+			_part(model, _ring(0.05, 0.005), Vector3(0.012 * mirror, -0.012, 0.035), BODY, Vector3(72, 0, 90))
+	# a thin accent band, so it reads as Goggles hardware
+	_part(model, _ring(0.0195, 0.0015), Vector3(0, -0.012, 0.035), Color(DashboardUI.ACCENT, 1.0), Vector3(72 + 90, 0, 0), true)
+	model.set_meta("lights", lights)
+	model.set_meta("dim", dim)
+	return model
+
+
+## Give each hand the model for its controller, and light the buttons that are pressed.
+func _update_models() -> void:
+	for side in hands:
+		var hand: Dictionary = hands[side]
+		var tracker := XRServer.get_tracker(hand.held.tracker) as XRPositionalTracker
+		var profile: String = tracker.profile if tracker else ""
+		if profile != hand.profile:
+			hand.profile = profile
+			if hand.model:
+				hand.model.queue_free()
+			hand.model = _make_controller_model(_controller_kind(profile), side)
+			hand.held.add_child(hand.model)
+		var model: Node3D = hand.model
+		model.visible = shown and open_amount > 0.5 and hand.held.get_has_tracking_data()
+		if not model.visible:
+			continue
+		var lights: Dictionary = model.get_meta("lights")
+		var dim: Color = model.get_meta("dim")
+		for input in lights:
+			var pressed := 0.0
+			if input == "trigger" or input == "grip":
+				pressed = hand.controller.get_float(input)
+			elif input == "primary":
+				pressed = minf(1.0, hand.controller.get_vector2(&"primary").length() * 1.2)
+			else:
+				pressed = 1.0 if hand.controller.is_button_pressed(input) else 0.0
+			((lights[input] as MeshInstance3D).material_override as StandardMaterial3D).albedo_color = dim.lerp(DashboardUI.ACCENT_2, clampf(pressed, 0.0, 1.0))
+
+
+# ------------------------------------------------------------------ gogglesxr commands
+## Run "gogglesxr <command>" on a thread and show its one-line answer on the dashboard.
+func _run_tool(command: String) -> void:
+	var job := Thread.new()
+	job.set_meta("command", command)
+	job.start(func() -> String:
+		var out := []
+		OS.execute("gogglesxr", [command], out)
+		return str(out[0]).strip_edges().split("\n")[-1] if not out.is_empty() else "")
+	tool_jobs.append(job)
+
+
+func _collect_tool_jobs() -> void:
+	for job in tool_jobs.duplicate():
+		if job.is_alive():
+			continue
+		var answer: String = job.wait_to_finish()
+		tool_jobs.erase(job)
+		if answer != "":
+			ui.say(answer)
+		if job.get_meta("command") == "record":
+			ui.set_recording(answer.begins_with("Recording the screen"))
+		if job.get_meta("command") == "quit-game":
+			game_wait = 0.0                   # look again straight away
 
 
 func _head() -> Vector3:
@@ -328,9 +507,14 @@ func _reset_place() -> void:
 	_apply_screen()
 
 
+## Recentre: the runtime makes the way you are facing the new "forward" for the game, and the
+## dashboard returns to its place in front of you.
 func _recentre() -> void:
 	if xr_active:
-		XRServer.center_on_hmd(XRServer.RESET_BUT_KEEP_TILT, true)
+		_run_tool("recenter")
+		await get_tree().create_timer(0.4).timeout    # let the runtime move the world first
+	else:
+		ui.say("View recentred")
 	_reset_place()
 	_save_place()
 
@@ -458,8 +642,10 @@ func _grip(pressed: bool) -> void:
 # ------------------------------------------------------------------ headset input
 func _process(delta: float) -> void:
 	_poll_game(delta)
+	_collect_tool_jobs()
 	if not xr_active:
 		return
+	_update_models()
 	scroll_wait = maxf(0.0, scroll_wait - delta)
 	if overlay:
 		var menu := false
@@ -493,7 +679,8 @@ func _process(delta: float) -> void:
 		hand.laser.visible = tracked
 		if tracked:
 			var up := Vector3.UP if absf(hand.dir.dot(Vector3.UP)) < 0.98 else Vector3.FORWARD
-			hand.laser.global_transform = Transform3D(Basis.looking_at(hand.dir, up).scaled(Vector3(1, 1, length)), hand.from + hand.dir * length / 2.0)
+			# Stretch the beam along its own length (not along the room's axes, which twists it)
+			hand.laser.global_transform = Transform3D(Basis.looking_at(hand.dir, up) * Basis.from_scale(Vector3(1, 1, length)), hand.from + hand.dir * length / 2.0)
 		hand.dot.visible = hit != null
 		if hit != null:
 			hand.dot.global_position = _pixels_to_world(hit)
@@ -566,11 +753,14 @@ func _unhandled_input(event: InputEvent) -> void:
 ## GOGGLESXR_PANEL=library       open on a given panel
 ## GOGGLESXR_SHOT=/path/out.png  save a picture of the window after a moment, then quit
 ## GOGGLESXR_TEST_BG=1           fill the background with a loud colour (to stand in for a game)
+## GOGGLESXR_SHOW_MODELS=1       desktop preview: line up every controller model, with lasers
 ## GOGGLESXR_SELFTEST=1          drive the dashboard through its pointer code, print results, quit
 func _debug_hooks() -> void:
 	var start_panel := OS.get_environment("GOGGLESXR_PANEL")
 	if DashboardUI.POS.has(start_panel):
 		ui.show_panel(start_panel, false)
+	if OS.get_environment("GOGGLESXR_SHOW_MODELS") != "":
+		_show_models()
 	if OS.get_environment("GOGGLESXR_TEST_BG") != "":
 		RenderingServer.set_default_clear_color(Color(0.75, 0.1, 0.45))
 	if OS.get_environment("GOGGLESXR_SELFTEST") != "":
@@ -580,6 +770,28 @@ func _debug_hooks() -> void:
 		print("Current Game panel: ", ui.game_title(), " / ", ui.game_state())
 		get_viewport().get_texture().get_image().save_png(OS.get_environment("GOGGLESXR_SHOT"))
 		get_tree().quit()
+
+
+func _show_models() -> void:
+	screen.visible = false
+	var kinds := ["touch", "touch_plus", "index", "wand", "generic"]
+	for i in kinds.size():
+		for side_index in 2:
+			var model := _make_controller_model(kinds[i], ["left", "right"][side_index])
+			add_child(model)
+			# held as you would hold it: pointing away and a little up
+			model.transform = Transform3D(Basis.from_euler(Vector3(deg_to_rad(25), deg_to_rad(18 - 36 * side_index), 0)),
+					camera.position + Vector3(-0.56 + 0.28 * i + (0.06 if side_index else -0.06), -0.02, -0.55))
+			if kinds[i] == "touch" or kinds[i] == "wand":
+				var beam := MeshInstance3D.new()
+				var box := BoxMesh.new()
+				box.size = Vector3(0.004, 0.004, 1.0)
+				beam.mesh = box
+				beam.material_override = hands["left"].laser.material_override
+				add_child(beam)
+				var aim := (-model.transform.basis.z).normalized()
+				var beam_up := Vector3.UP if absf(aim.dot(Vector3.UP)) < 0.98 else Vector3.FORWARD
+				beam.global_transform = Transform3D(Basis.looking_at(aim, beam_up) * Basis.from_scale(Vector3(1, 1, 0.6)), model.position + aim * 0.36)
 
 
 func _selftest() -> void:
@@ -702,6 +914,46 @@ func _selftest() -> void:
 	var mid := open_amount
 	await get_tree().create_timer(0.45).timeout
 	check.call("opening animates back to full size", mid > 0.0 and mid < 1.1 and screen.visible and absf(open_amount - 1.0) < 0.01, "%.2f on the way, %.2f at the end" % [mid, open_amount])
+
+	# Lasers: the beam must run exactly from the hand to where it points, at any angle
+	var beam_ok := true
+	for aim_dir in [Vector3(0, 0, -1), Vector3(1, 0.4, -1).normalized(), Vector3(-0.3, -0.8, -0.2).normalized(), Vector3(0, 1, 0)]:
+		var beam_up := Vector3.UP if absf(aim_dir.dot(Vector3.UP)) < 0.98 else Vector3.FORWARD
+		var beam := Transform3D(Basis.looking_at(aim_dir, beam_up) * Basis.from_scale(Vector3(1, 1, 2.5)), Vector3(1, 1, 1) + aim_dir * 1.25)
+		var tip := beam * Vector3(0, 0, -0.5)          # the far end of a unit-long box
+		var tail := beam * Vector3(0, 0, 0.5)
+		beam_ok = beam_ok and tip.distance_to(Vector3(1, 1, 1) + aim_dir * 2.5) < 0.001 and tail.distance_to(Vector3(1, 1, 1)) < 0.001
+	check.call("laser beam runs from the hand to its target at any angle", beam_ok, str(beam_ok))
+
+	# Controller models
+	var kinds := {"/interaction_profiles/oculus/touch_controller": "touch", "/interaction_profiles/meta/touch_controller_plus": "touch_plus",
+			"/interaction_profiles/valve/index_controller": "index", "/interaction_profiles/htc/vive_controller": "wand", "": "generic"}
+	var models_ok := true
+	for profile in kinds:
+		models_ok = models_ok and _controller_kind(profile) == kinds[profile]
+		for model_side in ["left", "right"]:
+			var built := _make_controller_model(kinds[profile], model_side)
+			models_ok = models_ok and built.get_child_count() >= 5 and (built.get_meta("lights") as Dictionary).has("trigger")
+			built.free()
+	check.call("a controller model is built for each kind of controller", models_ok, str(kinds.values()))
+
+	# Current Game buttons
+	var signals := []
+	ui.screenshot_requested.connect(func(): signals.append("screenshot"))
+	ui.quit_requested.connect(func(): signals.append("quit"))
+	ui.set_game({"id": "620980", "seconds": 60})
+	var named := func(text: String) -> Button:
+		return ui.find_children("", "Button", true, false).filter(func(b): return b.text == text)[0]
+	named.call("Screenshot").pressed.emit()
+	named.call("Quit game").pressed.emit()
+	check.call("Quit game asks for a second press", signals == ["screenshot"] and not named.call("Press again to quit").disabled, str(signals))
+	named.call("Press again to quit").pressed.emit()
+	check.call("the second press quits", signals == ["screenshot", "quit"], str(signals))
+	ui.set_recording(true)
+	check.call("Record clip turns into Stop recording", ui.find_children("", "Button", true, false).any(func(b): return b.text == "Stop recording"), "")
+	ui.set_recording(false)
+	ui.set_game({})
+	check.call("Quit game is off when nothing is running", named.call("Quit game").disabled, "")
 
 	# Game status
 	var parsed := _parse_game(" 4321 reaper SteamLaunch AppId=620980 -- /usr/bin/game \n")
