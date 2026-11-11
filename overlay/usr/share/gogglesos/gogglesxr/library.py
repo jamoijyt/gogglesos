@@ -16,6 +16,7 @@ CACHE = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.join(HOME, ".ca
 PROPS_FILE = os.path.join(CONFIG, "library.json")
 SCAN_FILE = os.path.join(CACHE, "vr-scan.json")
 LIST_FILE = os.path.join(CACHE, "library.json")          # read by the dashboard
+LAUNCH_FILE = os.path.join(CACHE, "launches.json")       # when each game was last started from GogglesXR
 STEAM_ROOTS = [".steam/debian-installation", ".steam/steam", ".local/share/Steam"]
 NOT_GAMES = ("Proton", "Steam Linux Runtime", "Steamworks Common", "SteamVR", "Steam Controller")
 
@@ -144,7 +145,7 @@ def _scan(game, scans):
 # ------------------------------------------------------------------ installed games
 def _steam_games():
     games, seen = [], set()
-    field = re.compile(r'"(appid|name|installdir)"\s+"([^"]*)"')
+    field = re.compile(r'"(appid|name|installdir|LastPlayed)"\s+"([^"]*)"')
     for apps in library_folders():
         for manifest in sorted(glob.glob(os.path.join(apps, "appmanifest_*.acf"))):
             try:
@@ -158,10 +159,17 @@ def _steam_games():
             if not app_id or not name or app_id in seen or name.startswith(NOT_GAMES):
                 continue
             seen.add(app_id)
-            games.append({"id": app_id, "name": name, "source": "steam",
+            games.append({"id": app_id, "name": name, "source": "steam", "played": _number(info.get("LastPlayed")),
                           "folder": os.path.join(apps, "common", info.get("installdir", "")),
                           "launch": "steam://rungameid/" + app_id})
     return games
+
+
+def _number(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _read_binary_vdf(data, pos=0):
@@ -210,6 +218,7 @@ def _shortcut_games():
                 exe = str(lowered.get("exe", "")).strip('"')
                 folder = str(lowered.get("startdir", "")).strip('"') or os.path.dirname(exe)
                 games.append({"id": str(app_id), "name": name, "source": "shortcut", "folder": folder,
+                              "played": _number(lowered.get("lastplaytime")),
                               # Steam's "game id" for a shortcut: its app id in the top half
                               "launch": "steam://rungameid/%d" % ((app_id << 32) | 0x02000000)})
     return games, grids
@@ -241,6 +250,7 @@ def games():
     scans = _load_json(SCAN_FILE, {})
     before = json.dumps(scans, sort_keys=True)
     props = load_props()
+    launches = _load_json(LAUNCH_FILE, {})
     shortcuts, grids = _shortcut_games()
     out = []
     for game in _steam_games() + shortcuts:
@@ -251,6 +261,8 @@ def games():
         game["title"] = chosen["name"] or game["name"]
         game["detected"] = detected
         game["art"] = cover_art(game["id"], grids)
+        # Steam's own record, or the last start from GogglesXR if that is newer
+        game["played"] = max(game.get("played", 0), _number(launches.get(game["id"])))
         game["is_vr"] = chosen["vr"] == "yes" or (chosen["vr"] == "auto" and detected in ("openxr", "steamvr"))
         game["vr_label"] = {"yes": "VR (set by you)", "no": "Not VR (set by you)"}.get(chosen["vr"], VR_LABELS[detected])
         out.append(game)
@@ -261,6 +273,24 @@ def games():
             pass
     out.sort(key=lambda g: (not g["favourite"], g["title"].lower()))
     return out
+
+
+def note_launch(app_id):
+    """Remember that a game was just started from GogglesXR (Steam records it later)."""
+    import time
+    launches = _load_json(LAUNCH_FILE, {})
+    launches[str(app_id)] = int(time.time())
+    try:
+        _save_json(LAUNCH_FILE, launches)
+    except OSError:
+        pass
+
+
+def last_played(all_games=None):
+    """The VR game played most recently, or None if nothing has been played yet."""
+    candidates = [g for g in (all_games if all_games is not None else games())
+                  if g["is_vr"] and not g["hidden"] and g["played"] > 0]
+    return max(candidates, key=lambda g: g["played"]) if candidates else None
 
 
 def dashboard_list(show_all=False):

@@ -33,6 +33,12 @@ var camera: XRCamera3D
 var xr_active := false
 var overlay := false                      # drawn on top of a running game (needs the overlay extension)
 var shown := true                         # overlay mode: the menu button shows and hides the dashboard
+var open_amount := 1.0                    # 0 = closed, 1 = open; animated when showing and hiding
+var open_tween: Tween
+var smoothing := 0.6                      # pointer smoothing, 0 (off) to 1 (strongest)
+var animations := true
+var game_thread: Thread                   # looks up the running game without holding up a frame
+var game_wait := 0.0
 var menu_was_down := false
 var centre := Vector3(0, SCREEN_HEIGHT_ABOVE_FLOOR, -REFERENCE_DISTANCE)   # where the dashboard floats
 var size_factor := 1.0                    # the Size setting
@@ -60,6 +66,10 @@ func _ready() -> void:
 	ui = DashboardUI.new()
 	viewport.add_child(ui)
 	ui.recentre_requested.connect(_recentre)
+	ui.resume_requested.connect(func(): if overlay: _set_shown(false))
+	ui.smoothing_changed.connect(func(v): smoothing = v; _save_prefs())
+	_load_prefs()
+	ui.set_smoothing(smoothing)
 	ui.scale_changed.connect(func(f): size_factor = f; _apply_screen(); _save_place())
 
 	var origin := XROrigin3D.new()
@@ -101,6 +111,9 @@ func _ready() -> void:
 	print("GogglesXR dashboard: ", "in the headset" if xr_active else "desktop preview", ", as an overlay on top of games" if overlay else "")
 	if overlay:
 		_setup_overlay()
+	if xr_active and animations:
+		open_amount = 0.0                 # the dashboard grows into view when it starts
+		_set_shown.call_deferred(true)
 	if xr_active and not _load_place():
 		_reset_place()
 	_apply_screen()
@@ -130,7 +143,6 @@ func _setup_overlay() -> void:
 
 func _set_shown(on: bool) -> void:
 	shown = on
-	screen.visible = on
 	if not on:
 		ui.swipe_end()
 		_move_end()
@@ -139,8 +151,123 @@ func _set_shown(on: bool) -> void:
 		for side in hands:
 			hands[side].laser.visible = false
 			hands[side].dot.visible = false
+	if open_tween:
+		open_tween.kill()
+	if not animations:
+		_set_open_amount(1.0 if on else 0.0)
+		return
+	# Opening: the panel grows out and fades in. Closing: the reverse, a little quicker.
+	open_tween = create_tween()
+	open_tween.tween_method(_set_open_amount, open_amount, 1.0 if on else 0.0, 0.26 if on else 0.18) \
+			.set_trans(Tween.TRANS_BACK if on else Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT if on else Tween.EASE_IN)
 
 
+func _set_open_amount(amount: float) -> void:
+	open_amount = amount
+	screen.visible = amount > 0.01
+	(screen.material_override as StandardMaterial3D).albedo_color.a = clampf(amount, 0.0, 1.0)
+	_apply_screen()
+
+
+# ------------------------------------------------------------------ pointer smoothing
+## Steadies a pointing ray. Hands shake a little, and a laser turns that into a jumpy dot a
+## metre and a half away. Slow movement is smoothed a lot and fast movement barely at all, so
+## the pointer holds still on a button but keeps up when you swing across the panel.
+func _smooth_ray(hand: Dictionary, from: Vector3, dir: Vector3, delta: float) -> void:
+	if smoothing <= 0.01 or hand.dir == Vector3.ZERO or delta <= 0.0:
+		hand.from = from
+		hand.dir = dir
+		return
+	var speed := rad_to_deg(hand.dir.angle_to(dir)) / delta            # degrees per second
+	var slow := pow(1.0 - smoothing, 2.0) * 0.75 + 0.02               # how closely a slow hand is followed
+	var follow := lerpf(slow, 1.0, clampf((speed - 8.0) / 80.0, 0.0, 1.0))
+	var step := 1.0 - pow(1.0 - follow, delta * 90.0)                  # the same feel at any frame rate
+	hand.from = hand.from.lerp(from, step)
+	hand.dir = hand.dir.slerp(dir, step).normalized()
+
+
+func _prefs_path() -> String:
+	var config := OS.get_environment("XDG_CONFIG_HOME")
+	if config == "":
+		config = OS.get_environment("HOME").path_join(".config")
+	return config.path_join("gogglesxr/settings.json")
+
+
+## Settings shared with the GogglesXR desktop app.
+func _load_prefs() -> void:
+	var file := FileAccess.open(_prefs_path(), FileAccess.READ)
+	if file == null:
+		return
+	var data: Variant = JSON.parse_string(file.get_as_text())
+	if data is Dictionary:
+		smoothing = clampf(float(data.get("pointer_smoothing", 60)) / 100.0, 0.0, 1.0)
+		animations = bool(data.get("animations", true))
+
+
+func _save_prefs() -> void:
+	var data := {}
+	var file := FileAccess.open(_prefs_path(), FileAccess.READ)
+	if file:
+		var old: Variant = JSON.parse_string(file.get_as_text())
+		if old is Dictionary:
+			data = old
+		file.close()
+	data["pointer_smoothing"] = int(round(smoothing * 100.0))
+	DirAccess.make_dir_recursive_absolute(_prefs_path().get_base_dir())
+	file = FileAccess.open(_prefs_path(), FileAccess.WRITE)
+	if file:
+		file.store_string(JSON.stringify(data, " "))
+
+
+# ------------------------------------------------------------------ running game
+## Steam starts every game through a helper whose command line names the game's id.
+## Runs on a thread. The commands are kept free of quotes and $ signs because Godot passes
+## them through a shell of its own. Returns "<seconds running> <command line>" or "".
+func _find_game() -> String:
+	var out := []
+	# The [d] stops pgrep from matching its own command line
+	if OS.execute("pgrep", ["-af", "SteamLaunch AppI[d]="], out) != 0 or out.is_empty():
+		return ""
+	var line := str(out[0]).split("\n")[0].strip_edges()
+	var pid := line.get_slice(" ", 0)
+	if not pid.is_valid_int():
+		return ""
+	var age := []
+	OS.execute("ps", ["-o", "etimes=", "-p", pid], age)
+	var seconds := str(age[0]).strip_edges() if not age.is_empty() else "0"
+	return (seconds if seconds.is_valid_int() else "0") + " " + line.substr(pid.length() + 1)
+
+
+func _poll_game(delta: float) -> void:
+	if OS.get_environment("GOGGLESXR_SELFTEST") != "":
+		return                                # the self-test feeds the panel itself
+	if game_thread and not game_thread.is_alive():
+		ui.set_game(_parse_game(game_thread.wait_to_finish()))
+		game_thread = null
+	game_wait -= delta
+	if game_wait <= 0.0 and game_thread == null:
+		game_wait = 3.0
+		game_thread = Thread.new()
+		game_thread.start(_find_game)
+
+
+## -> {"id", "seconds"} for the running game, or {} when there is none.
+func _parse_game(text: String) -> Dictionary:
+	var found := RegEx.new()
+	found.compile("^\\s*(\\d+)\\s.*SteamLaunch AppId=(\\d+)")
+	for line in text.split("\n"):
+		var m := found.search(line)
+		if m:
+			return {"id": m.get_string(2), "seconds": int(m.get_string(1))}
+	return {}
+
+
+func _exit_tree() -> void:
+	if game_thread:
+		game_thread.wait_to_finish()
+
+
+# ------------------------------------------------------------------ scene
 # ------------------------------------------------------------------ scene
 func _make_hand(origin: XROrigin3D, side: String) -> Dictionary:
 	var controller := XRController3D.new()
@@ -156,7 +283,7 @@ func _make_hand(origin: XROrigin3D, side: String) -> Dictionary:
 	glow.albedo_color = DashboardUI.ACCENT
 	laser.material_override = glow
 	laser.visible = false
-	controller.add_child(laser)
+	add_child(laser)                      # placed along the smoothed pointing ray each frame
 	var dot := MeshInstance3D.new()
 	var ball := SphereMesh.new()
 	ball.radius = 0.012
@@ -169,7 +296,8 @@ func _make_hand(origin: XROrigin3D, side: String) -> Dictionary:
 	dot.material_override = bright
 	dot.visible = false
 	add_child(dot)
-	return {"controller": controller, "laser": laser, "dot": dot, "trigger": false, "grip": false}
+	return {"controller": controller, "laser": laser, "dot": dot, "trigger": false, "grip": false,
+			"from": Vector3.ZERO, "dir": Vector3.ZERO}
 
 
 func _head() -> Vector3:
@@ -186,7 +314,7 @@ func _apply_screen() -> void:
 		away = 0.05
 	var facing := to_screen / away
 	var up := Vector3.UP if absf(facing.dot(Vector3.UP)) < 0.98 else Vector3.FORWARD
-	var factor := size_factor * away / REFERENCE_DISTANCE
+	var factor := size_factor * away / REFERENCE_DISTANCE * lerpf(0.8, 1.0, clampf(open_amount, 0.0, 1.2))
 	screen.global_transform = Transform3D(Basis.looking_at(facing, up), centre).scaled_local(Vector3.ONE * factor)
 
 
@@ -329,6 +457,7 @@ func _grip(pressed: bool) -> void:
 
 # ------------------------------------------------------------------ headset input
 func _process(delta: float) -> void:
+	_poll_game(delta)
 	if not xr_active:
 		return
 	scroll_wait = maxf(0.0, scroll_wait - delta)
@@ -353,20 +482,25 @@ func _process(delta: float) -> void:
 			if side != active_hand and not ui.is_swiping() and mouse_buttons == 0:
 				active_hand = side
 		var aim := controller.global_transform
-		var hit: Variant = _ray_to_pixels(aim.origin, -aim.basis.z) if tracked else null
+		if tracked:
+			_smooth_ray(hand, aim.origin, -aim.basis.z, delta)
+		else:
+			hand.dir = Vector3.ZERO
+		var hit: Variant = _ray_to_pixels(hand.from, hand.dir) if tracked else null
 		var length := LASER_LENGTH
 		if hit != null:
-			length = aim.origin.distance_to(_pixels_to_world(hit))
+			length = hand.from.distance_to(_pixels_to_world(hit))
 		hand.laser.visible = tracked
-		hand.laser.scale = Vector3(1, 1, length)
-		hand.laser.position = Vector3(0, 0, -length / 2.0)
+		if tracked:
+			var up := Vector3.UP if absf(hand.dir.dot(Vector3.UP)) < 0.98 else Vector3.FORWARD
+			hand.laser.global_transform = Transform3D(Basis.looking_at(hand.dir, up).scaled(Vector3(1, 1, length)), hand.from + hand.dir * length / 2.0)
 		hand.dot.visible = hit != null
 		if hit != null:
 			hand.dot.global_position = _pixels_to_world(hit)
 
 		if side == active_hand:
-			ray_from = aim.origin
-			ray_dir = -aim.basis.z
+			ray_from = hand.from
+			ray_dir = hand.dir
 			var stick := controller.get_vector2(&"primary")
 			if moving:
 				_move_update(stick.y, delta)
@@ -442,13 +576,14 @@ func _debug_hooks() -> void:
 	if OS.get_environment("GOGGLESXR_SELFTEST") != "":
 		_selftest.call_deferred()
 	elif OS.get_environment("GOGGLESXR_SHOT") != "":
-		await get_tree().create_timer(1.0).timeout
+		await get_tree().create_timer(1.5).timeout
+		print("Current Game panel: ", ui.game_title(), " / ", ui.game_state())
 		get_viewport().get_texture().get_image().save_png(OS.get_environment("GOGGLESXR_SHOT"))
 		get_tree().quit()
 
 
 func _selftest() -> void:
-	var failures := 0
+	var fails := [0]
 	var grab_at := Vector2(640, 60)
 	var swipe := func(by: Vector2, hold_ms: int) -> void:
 		_send_motion(grab_at)
@@ -463,7 +598,7 @@ func _selftest() -> void:
 		var ok := ui.current == want
 		print(("PASS " if ok else "FAIL ") + what + " -> " + ui.current)
 		if not ok:
-			failures += 1
+			fails[0] += 1
 
 	await get_tree().create_timer(0.3).timeout
 	expect.call("start", "game")
@@ -497,7 +632,7 @@ func _selftest() -> void:
 	var miss: Variant = _ray_to_pixels(camera.global_position, Vector3.UP)
 	print(("PASS " if miss == null else "FAIL ") + "ray pointing away misses")
 	if not centred or miss != null:
-		failures += 1
+		fails[0] += 1
 
 	# Move the dashboard: grip on the status bar, swing the laser right, push the stick forward
 	var head := _head()
@@ -509,7 +644,7 @@ func _selftest() -> void:
 	var check := func(what: String, ok: bool, detail: String) -> void:
 		print(("PASS " if ok else "FAIL ") + what + " -> " + detail)
 		if not ok:
-			failures += 1
+			fails[0] += 1
 	aim_at.call(bar)
 	var start_centre := centre
 	var start_width := screen.global_transform.basis.x.length()
@@ -538,7 +673,45 @@ func _selftest() -> void:
 	centre = Vector3.ZERO
 	check.call("position is remembered", not moving and _load_place() and centre.distance_to(kept) < 0.001, str(centre))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(SETTINGS_FILE))
+
+	# Pointer smoothing: a shaky hand barely moves the ray, a fast swing gets through
+	var hand := {"from": Vector3.ZERO, "dir": Vector3.FORWARD}
+	smoothing = 0.6
+	var wobble := 0.0                 # a hand tremor: a tenth of a degree, ten times a second
+	for i in 180:
+		_smooth_ray(hand, Vector3.ZERO, Vector3.FORWARD.rotated(Vector3.UP, deg_to_rad(0.1 * sin(i / 90.0 * TAU * 10.0))), 1.0 / 90.0)
+		if i > 90:
+			wobble = maxf(wobble, rad_to_deg(hand.dir.angle_to(Vector3.FORWARD)))
+	check.call("smoothing steadies a shaky hand", wobble < 0.03, "0.100 degrees of shake -> %.3f" % wobble)
+	var swing := Vector3.FORWARD.rotated(Vector3.UP, deg_to_rad(30))
+	for i in 12:
+		_smooth_ray(hand, Vector3.ZERO, swing, 1.0 / 90.0)
+	var behind := rad_to_deg(hand.dir.angle_to(swing))
+	check.call("a fast swing is followed quickly", behind < 3.0, "%.2f degrees behind after 0.13 s" % behind)
+	smoothing = 0.0
+	_smooth_ray(hand, Vector3.ZERO, Vector3.UP, 1.0 / 90.0)
+	check.call("smoothing off follows exactly", hand.dir == Vector3.UP, str(hand.dir))
+
+	# Open and close animation
+	animations = true
+	_set_shown(false)
+	await get_tree().create_timer(0.4).timeout
+	check.call("closing hides the dashboard", not screen.visible and open_amount < 0.01, "%.2f" % open_amount)
+	_set_shown(true)
+	await get_tree().create_timer(0.08).timeout
+	var mid := open_amount
+	await get_tree().create_timer(0.45).timeout
+	check.call("opening animates back to full size", mid > 0.0 and mid < 1.1 and screen.visible and absf(open_amount - 1.0) < 0.01, "%.2f on the way, %.2f at the end" % [mid, open_amount])
+
+	# Game status
+	var parsed := _parse_game(" 4321 reaper SteamLaunch AppId=620980 -- /usr/bin/game \n")
+	check.call("running game is read from Steam's launcher", parsed.get("id") == "620980" and parsed.get("seconds") == 4321, str(parsed))
+	check.call("no game running", _parse_game("").is_empty() and _parse_game("12 bash\n").is_empty(), "{}")
+	ui.set_game(parsed)
+	check.call("Current Game panel shows it", ui.game_title() == "Beat Saber" and ui.game_state().contains("1 H 12 M"), ui.game_title() + " / " + ui.game_state())
+	ui.set_game({})
+	check.call("and clears when it ends", ui.game_state().contains("NO GAME"), ui.game_state())
 	print("games found: ", SteamLibrary.installed_games().size(), ", in the Library panel: ", SteamLibrary.games().size(),
 			", with cover art: ", SteamLibrary.games().filter(func(g): return SteamLibrary.cover(str(g.get("art", "")), Vector2i(216, 300)) != null).size())
-	print("SELFTEST " + ("OK" if failures == 0 else "FAILED (%d)" % failures))
-	get_tree().quit(failures)
+	print("SELFTEST " + ("OK" if fails[0] == 0 else "FAILED (%d)" % fails[0]))
+	get_tree().quit(fails[0])

@@ -78,6 +78,14 @@ static func games() -> Array[Dictionary]:
 	return games
 
 
+## Everything installed, whatever the Library panel shows (to name a running game).
+static func all_games() -> Array[Dictionary]:
+	var games: Array[Dictionary] = []
+	for game in installed_games():
+		games.append({"id": game.id, "name": game.name, "launch": "steam://rungameid/" + game.id, "art": ""})
+	return games
+
+
 static func launch(url: String) -> bool:
 	return url.begins_with("steam://") and OS.create_process("steam", [url]) > 0
 
