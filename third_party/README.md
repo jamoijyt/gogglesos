@@ -24,3 +24,13 @@ controller instead.
 
 To update: download the new package version, check the models, change the version in
 `apply-system.sh` and regenerate the list from the package's `dist/profiles` folder.
+
+## Goggles Link (downloaded, checksum-pinned)
+
+`goggles-link.sha256` names one release of [Goggles Link](https://github.com/jamoijyt/goggles-link),
+GogglesXR's own link software (a fork of WiVRn, GPL-3.0): the PC server archive and the headset
+APK. `chroot/apply-system.sh` downloads both from that release, checks them against this file,
+unpacks the server to `/opt/goggles-link` and keeps the APK at
+`/usr/share/gogglesos/goggles-link.apk`. The version is read from the file names.
+
+To move to a new release: replace this file with the release's `SHA256SUMS`.
