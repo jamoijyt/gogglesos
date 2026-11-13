@@ -8,3 +8,5 @@
 *.svgz binary
 *.tar.gz binary
 *.so binary
+*.jpg binary
+gogglesxr/desktop-grab/gogglesxr-desktop-grab binary

@@ -21,6 +21,10 @@ extends Node3D
 const DashboardUI := preload("res://dashboard_ui.gd")
 const SteamLibrary := preload("res://steam_library.gd")
 const ControllerModels := preload("res://controller_models.gd")
+const DesktopView := preload("res://desktop_view.gd")
+const HOME_IMAGE := "res://environments/goggles-home.jpg"
+const BIG_SCREEN_WIDTH := 3.0             # metres
+const BIG_SCREEN_DISTANCE := 3.2
 
 const SCREEN_WIDTH := 1.35                # metres, at the reference distance
 const REFERENCE_DISTANCE := 1.5           # the dashboard grows and shrinks with distance from here
@@ -65,6 +69,18 @@ var countdown_phase := ""                 # "", "count", "wait" (runtime working
 var countdown_root: Node3D                # the countdown's numbers, held in front of your eyes
 var countdown_number: Label3D
 var countdown_text: Label3D
+var prefs := {}                           # settings.json, shared with the desktop app and gogglesxr
+var world_env: WorldEnvironment
+var home_sky: Sky                         # the home environment, when one is chosen and loaded
+var home_shown := false
+var game_info := {}                       # the Steam game running, from _poll_game
+var headset_info := {}                    # gogglesxr headset --json
+var headset_thread: Thread
+var headset_wait := 0.0
+var desktop: DesktopView
+var desktop_panel_wanted := false
+var big_screen: MeshInstance3D
+var big_on := false
 
 
 func _ready() -> void:
@@ -82,8 +98,15 @@ func _ready() -> void:
 	ui.record_requested.connect(func(): _run_tool("record"))
 	ui.quit_requested.connect(func(): ui.say("Closing the game…"); _run_tool("quit-game"))
 	ui.smoothing_changed.connect(func(v): smoothing = v; _save_prefs())
+	ui.setting_changed.connect(_on_setting)
+	ui.big_screen_toggled.connect(_set_big_screen)
+	desktop = DesktopView.new()
+	add_child(desktop)
+	desktop.changed.connect(_desktop_changed)
 	_load_prefs()
 	ui.set_smoothing(smoothing)
+	ui.apply_settings(prefs)
+	desktop.set_options(str(prefs.get("desktop_screen", "all")), int(prefs.get("desktop_fps", 15)))
 	ui.scale_changed.connect(func(f): size_factor = f; _apply_screen(); _save_place())
 
 	var origin := XROrigin3D.new()
@@ -101,6 +124,7 @@ func _ready() -> void:
 	world.environment.ambient_light_color = Color(0.55, 0.7, 0.65)
 	world.environment.ambient_light_energy = 1.0
 	add_child(world)
+	world_env = world
 	camera = XRCamera3D.new()
 	camera.position = Vector3(0, SCREEN_HEIGHT_ABOVE_FLOOR, 0)
 	origin.add_child(camera)
@@ -145,6 +169,8 @@ func _ready() -> void:
 	if xr_active and not _load_place():
 		_reset_place()
 	_apply_screen()
+	_load_home()
+	_make_big_screen()
 	_debug_hooks()
 
 
@@ -230,25 +256,175 @@ func _load_prefs() -> void:
 	var file := FileAccess.open(_prefs_path(), FileAccess.READ)
 	if file == null:
 		return
-	var data: Variant = JSON.parse_string(file.get_as_text())
+	var text := file.get_as_text()
+	var data: Variant = JSON.parse_string(text) if text.strip_edges() != "" else null
 	if data is Dictionary:
+		prefs = data
 		smoothing = clampf(float(data.get("pointer_smoothing", 60)) / 100.0, 0.0, 1.0)
 		animations = bool(data.get("animations", true))
 
 
-func _save_prefs() -> void:
+## A choice made on the dashboard: saved for everything that shares settings.json.
+func _on_setting(key: String, value: Variant) -> void:
+	prefs[key] = value
+	_save_setting(key, value)
+	match key:
+		"environment":
+			_load_home()
+		"desktop_screen", "desktop_fps":
+			desktop.set_options(str(prefs.get("desktop_screen", "all")), int(prefs.get("desktop_fps", 15)))
+
+
+func _save_setting(key: String, value: Variant) -> void:
 	var data := {}
 	var file := FileAccess.open(_prefs_path(), FileAccess.READ)
 	if file:
-		var old: Variant = JSON.parse_string(file.get_as_text())
+		var text := file.get_as_text()
+		var old: Variant = JSON.parse_string(text) if text.strip_edges() != "" else null
 		if old is Dictionary:
 			data = old
 		file.close()
-	data["pointer_smoothing"] = int(round(smoothing * 100.0))
+	data[key] = value
 	DirAccess.make_dir_recursive_absolute(_prefs_path().get_base_dir())
 	file = FileAccess.open(_prefs_path(), FileAccess.WRITE)
 	if file:
 		file.store_string(JSON.stringify(data, " "))
+
+
+func _save_prefs() -> void:
+	_save_setting("pointer_smoothing", int(round(smoothing * 100.0)))
+
+
+# ------------------------------------------------------------------ headset status
+## Ask the streaming engine about the headset every few seconds (batteries, ping, stream):
+## `gogglesxr headset --json` on a thread.
+func _poll_headset(delta: float) -> void:
+	if OS.get_environment("GOGGLESXR_SELFTEST") != "":
+		return                                # the self-test feeds the strip itself
+	if headset_thread and not headset_thread.is_alive():
+		var text: String = headset_thread.wait_to_finish()
+		headset_thread = null
+		var data: Variant = JSON.parse_string(text) if text.begins_with("{") else null
+		headset_info = data if data is Dictionary else {}
+		ui.set_headset(headset_info)
+	headset_wait -= delta
+	if headset_wait <= 0.0 and headset_thread == null:
+		headset_wait = 5.0
+		headset_thread = Thread.new()
+		headset_thread.start(func() -> String:
+			var out := []
+			OS.execute("gogglesxr", ["headset", "--json"], out)
+			return str(out[0]).strip_edges().split("\n")[-1] if not out.is_empty() else "")
+
+
+## Whether a VR game is running: Steam's launcher, GogglesXR's capture layer (refreshed every 2 s
+## while a game draws), or an app the runtime reports that isn't an overlay like this one.
+func _game_running() -> bool:
+	if not game_info.is_empty():
+		return true
+	var status := _capture_status_path()
+	if FileAccess.file_exists(status) and Time.get_unix_time_from_system() - FileAccess.get_modified_time(status) < 6:
+		return true
+	if overlay:                               # (in normal mode the main app is this dashboard)
+		for app in headset_info.get("apps", []):
+			if app is Dictionary and app.get("active", false) and not app.get("overlay", false):
+				return true
+	return false
+
+
+func _capture_status_path() -> String:
+	return OS.get_environment("HOME").path_join(".cache/gogglesxr/capture/game.status")
+
+
+# ------------------------------------------------------------------ home environment
+## A 360° picture around you while no game is running (Settings > Home): Goggles OS's own
+## night scene, a picture of your own (chosen in the desktop app), or nothing.
+func _load_home() -> void:
+	home_sky = null
+	var choice := str(prefs.get("environment", "goggles"))
+	var path := ""
+	if choice == "custom":
+		path = str(prefs.get("environment_image", ""))
+	elif choice != "none":
+		path = ProjectSettings.globalize_path(HOME_IMAGE)
+	if path != "":
+		var image := Image.load_from_file(path) if FileAccess.file_exists(path) else null
+		if image == null and choice == "custom":
+			ui.say("Couldn't open your 360° picture; showing Goggles night instead")
+			image = Image.load_from_file(ProjectSettings.globalize_path(HOME_IMAGE))
+		if image:
+			var material := PanoramaSkyMaterial.new()
+			material.panorama = ImageTexture.create_from_image(image)
+			home_sky = Sky.new()
+			home_sky.sky_material = material
+	_update_home(true)
+
+
+func _update_home(force := false) -> void:
+	if world_env == null:
+		return
+	# Over a game (overlay mode) the scene must stay see-through; on its own it is the backdrop
+	var show := home_sky != null and (not overlay or not _game_running())
+	if show == home_shown and not force:
+		return
+	home_shown = show
+	var environment := world_env.environment
+	if show:
+		environment.sky = home_sky
+		environment.background_mode = Environment.BG_SKY
+	else:
+		environment.background_mode = Environment.BG_CLEAR_COLOR
+	if overlay:
+		get_viewport().transparent_bg = not show
+
+
+# ------------------------------------------------------------------ desktop view
+func _desktop_changed() -> void:
+	ui.set_desktop(desktop.texture, desktop.message)
+	if big_screen:
+		var material := big_screen.material_override as StandardMaterial3D
+		material.albedo_texture = desktop.texture
+		if desktop.texture:
+			var size := desktop.texture.get_size()
+			(big_screen.mesh as QuadMesh).size = Vector2(BIG_SCREEN_WIDTH, BIG_SCREEN_WIDTH * size.y / maxf(size.x, 1.0))
+		big_screen.visible = big_on and desktop.texture != null
+
+
+## The Desktop panel wants pictures while it is in view; the big screen whenever it is on.
+func _update_desktop() -> void:
+	var wanted := shown and open_amount > 0.5 and ui.current == "desktop" and not ui.is_swiping()
+	if wanted != desktop_panel_wanted:
+		desktop_panel_wanted = wanted
+		desktop.want("panel", wanted)
+
+
+func _make_big_screen() -> void:
+	big_screen = MeshInstance3D.new()
+	var quad := QuadMesh.new()
+	quad.size = Vector2(BIG_SCREEN_WIDTH, BIG_SCREEN_WIDTH * 9.0 / 16.0)
+	big_screen.mesh = quad
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	big_screen.material_override = material
+	big_screen.visible = false
+	add_child(big_screen)
+
+
+## A large copy of the desktop, standing further away in the direction you face.
+func _set_big_screen(on: bool) -> void:
+	big_on = on
+	desktop.want("big", on)
+	ui.set_big_screen(on)
+	if on:
+		var head := camera.global_transform
+		var forward := -head.basis.z
+		forward.y = 0
+		forward = forward.normalized() if forward.length() > 0.01 else Vector3.FORWARD
+		var at := head.origin + forward * BIG_SCREEN_DISTANCE + Vector3.UP * 0.35
+		big_screen.global_transform = Transform3D(Basis.looking_at(forward, Vector3.UP), at)   # its face towards you
+		ui.say("Big screen on: it stays while you play. Turn it off on the Desktop panel.")
+	big_screen.visible = on and desktop.texture != null
 
 
 # ------------------------------------------------------------------ running game
@@ -274,7 +450,8 @@ func _poll_game(delta: float) -> void:
 	if OS.get_environment("GOGGLESXR_SELFTEST") != "":
 		return                                # the self-test feeds the panel itself
 	if game_thread and not game_thread.is_alive():
-		ui.set_game(_parse_game(game_thread.wait_to_finish()))
+		game_info = _parse_game(game_thread.wait_to_finish())
+		ui.set_game(game_info)
 		game_thread = null
 	game_wait -= delta
 	if game_wait <= 0.0 and game_thread == null:
@@ -297,6 +474,8 @@ func _parse_game(text: String) -> Dictionary:
 func _exit_tree() -> void:
 	if game_thread:
 		game_thread.wait_to_finish()
+	if headset_thread:
+		headset_thread.wait_to_finish()
 	for side in hands:
 		if hands[side].loader:
 			hands[side].loader.wait_to_finish()
@@ -766,8 +945,11 @@ func _grip(pressed: bool) -> void:
 # ------------------------------------------------------------------ headset input
 func _process(delta: float) -> void:
 	_poll_game(delta)
+	_poll_headset(delta)
 	_collect_tool_jobs()
 	_update_countdown(delta)
+	_update_home()
+	_update_desktop()
 	if not xr_active:
 		return
 	_update_models()
@@ -878,16 +1060,18 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 # ------------------------------------------------------------------ testing hooks
-## GOGGLESXR_PANEL=library       open on a given panel
+## GOGGLESXR_PANEL=library       open on a given panel (settings:Recording: a section of Settings)
 ## GOGGLESXR_SHOT=/path/out.png  save a picture of the window after a moment, then quit
 ## GOGGLESXR_TEST_BG=1           fill the background with a loud colour (to stand in for a game)
 ## GOGGLESXR_SHOW_MODELS=1       desktop preview: line up every controller model (right hands pressed)
 ## GOGGLESXR_RECENTRE=1          start the recentre countdown straight away
 ## GOGGLESXR_SELFTEST=1          drive the dashboard through its pointer code, print results, quit
 func _debug_hooks() -> void:
-	var start_panel := OS.get_environment("GOGGLESXR_PANEL")
-	if DashboardUI.POS.has(start_panel):
-		ui.show_panel(start_panel, false)
+	var start_panel := OS.get_environment("GOGGLESXR_PANEL")    # "settings:Recording" opens a section
+	if DashboardUI.POS.has(start_panel.get_slice(":", 0)):
+		ui.show_panel(start_panel.get_slice(":", 0), false)
+		if start_panel.contains(":"):
+			ui.show_settings(start_panel.get_slice(":", 1))
 	if OS.get_environment("GOGGLESXR_SHOW_MODELS") != "":
 		_show_models()
 	if OS.get_environment("GOGGLESXR_TEST_BG") != "":
@@ -1120,6 +1304,55 @@ func _selftest() -> void:
 	check.call("then recentres and says so", countdown_phase == "done" and countdown_text.text == "View recentred", countdown_phase + " / " + countdown_text.text)
 	await get_tree().create_timer(1.6).timeout
 	check.call("and the dashboard comes back", countdown_phase == "" and not countdown_root.visible and screen.visible, str(screen.visible))
+
+	# Status strip: batteries and ping from the engine
+	ui.set_headset({"connected": true, "name": "Meta Quest 3", "engine_name": "WiVRn", "ping_ms": 4.4, "connection": "wifi",
+			"battery": {"head": {"charge": 82, "charging": true}, "left": {"charge": 15, "charging": false}, "right": {"charge": 60, "charging": false}}})
+	var strip := ui.headset_text()
+	check.call("the strip shows batteries and ping", strip.contains("HEADSET  + 82%") and strip.contains("LEFT 15%") and strip.contains("PING 4 ms"), strip)
+	ui.set_headset({"connected": false})
+	check.call("and says when no headset is connected", ui.headset_text() == "HEADSET Not connected", ui.headset_text())
+
+	# Settings chosen on the dashboard are saved for the desktop app and gogglesxr
+	var settings_before := FileAccess.get_file_as_string(_prefs_path())
+	var nine_sixteen: Button = ui.find_children("", "Button", true, false).filter(func(b): return b.text == "9:16 upright")[0]
+	nine_sixteen.pressed.emit()
+	var saved: Variant = JSON.parse_string(FileAccess.get_file_as_string(_prefs_path()))
+	check.call("a recording choice is saved to settings.json", saved is Dictionary and saved.get("record_aspect") == "9:16", str(saved))
+	ui.apply_settings({"record_fps": 60.0, "desktop_screen": "active"})
+	check.call("saved settings are shown (numbers too)", ui.choice("record_fps") == 60 and ui.choice("desktop_screen") == "active", str(ui.choice("record_fps")))
+
+	# Home environment: shown around you when no game is running
+	prefs["environment"] = "goggles"
+	_load_home()
+	check.call("the Goggles home environment is shown", home_sky != null and world_env.environment.background_mode == Environment.BG_SKY, "")
+	_on_setting("environment", "none")
+	check.call("and can be switched off", world_env.environment.background_mode == Environment.BG_CLEAR_COLOR, "")
+	_on_setting("environment", "goggles")
+
+	# Desktop view: the panel starts the picture taker (here drawing a test pattern) and shows it
+	var helper := OS.get_environment("GOGGLESXR_DESKTOP_GRAB")
+	if helper != "" and FileAccess.file_exists(helper):
+		_on_setting("desktop_screen", "all")
+		ui.show_panel("desktop", false)
+		await get_tree().create_timer(2.0).timeout
+		check.call("the Desktop panel shows the desktop live", desktop.running() and desktop.texture != null and desktop.message == "", desktop.message)
+		_set_big_screen(true)
+		check.call("Big screen shows a large copy", big_screen.visible and (big_screen.mesh as QuadMesh).size.x == BIG_SCREEN_WIDTH, "")
+		ui.show_panel("game", false)
+		await get_tree().create_timer(0.3).timeout
+		check.call("it keeps running for the big screen", desktop.running(), "")
+		_set_big_screen(false)
+		await get_tree().create_timer(0.3).timeout
+		check.call("and stops when nothing shows it", not desktop.running() and not big_screen.visible, "")
+	else:
+		print("SKIP desktop view: set GOGGLESXR_DESKTOP_GRAB to the built gogglesxr-desktop-grab")
+	if settings_before == "":
+		DirAccess.remove_absolute(_prefs_path())
+	else:
+		var file := FileAccess.open(_prefs_path(), FileAccess.WRITE)
+		file.store_string(settings_before)
+		file.close()
 
 	# Current Game buttons
 	var signals := []

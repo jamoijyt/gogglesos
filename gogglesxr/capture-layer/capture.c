@@ -14,8 +14,11 @@
  * xrizer). OpenGL games and the GogglesXR dashboard itself (an overlay session) are left alone.
  *
  * Requests, in ~/.cache/gogglesxr/capture/ (the home folder is shared with Steam's containers):
- *   screenshot.request   created by gogglesxr: capture the next frame into shot.pam
- *   record.on            "WIDTH HEIGHT FPS": stream frames into record.fifo while it exists
+ *   screenshot.request   created by gogglesxr: capture the next frame into shot.pam. Empty: the
+ *                        whole eye image; "W H ZOOM": a W:H crop around the point straight ahead
+ *   record.on            "WIDTH HEIGHT FPS [ZOOM]": stream frames into record.fifo while it
+ *                        exists. The crop has the WIDTH:HEIGHT shape (16:9, 9:16, 1:1...);
+ *                        ZOOM 1 is the widest such crop, smaller values zoom in
  *   game.status          written here: the game that can be captured (refreshed every 2 s)
  *
  * Built with one gcc command (build.sh), with older glibc symbol versions so it also loads
@@ -173,6 +176,8 @@ typedef struct session_rec {
 	XrFovf eye_fov;
 	/* Requests */
 	bool shot_pending;
+	double shot_aspect, shot_zoom; /* 0: the whole eye image */
+	double rec_zoom;
 	bool recording;
 	uint32_t rec_w, rec_h;
 	double rec_interval, rec_last;
@@ -667,13 +672,16 @@ static VkFormat copy_format(VkFormat src)
 }
 
 /* ------------------------------------------------------------------ captures */
+static XrRect2Di crop_rect(session_rec *s, double aspect, double zoom);
+
 static void take_screenshot(session_rec *s, swapchain_rec *sc, VkImage src)
 {
 	s->shot_pending = false;
-	uint32_t w = (uint32_t)s->eye_rect.extent.width, h = (uint32_t)s->eye_rect.extent.height;
+	XrRect2Di area = s->shot_aspect > 0 ? crop_rect(s, s->shot_aspect, s->shot_zoom) : s->eye_rect;
+	uint32_t w = (uint32_t)area.extent.width, h = (uint32_t)area.extent.height;
 	if (w == 0 || h == 0 || !target_make(s, &s->shot, w, h, copy_format(sc->format)))
 		return;
-	if (!copy_eye(s, sc, src, s->eye_rect, &s->shot)) {
+	if (!copy_eye(s, sc, src, area, &s->shot)) {
 		say("this game's image format can't be copied");
 		return;
 	}
@@ -700,31 +708,39 @@ static void take_screenshot(session_rec *s, swapchain_rec *sc, VkImage src)
 	push_job(j);
 }
 
-/* The 16:9 part of the eye image around the point straight ahead */
-static XrRect2Di record_crop(session_rec *s)
+/* The part of the eye image around the point straight ahead with the shape `aspect` (width /
+ * height), as large as fits, then made smaller by `zoom` (1 = as large as fits) */
+static XrRect2Di crop_rect(session_rec *s, double aspect, double zoom)
 {
 	XrRect2Di eye = s->eye_rect;
 	int32_t w = eye.extent.width, h = eye.extent.height;
-	int32_t cw = w, ch = w * 9 / 16;
+	if (aspect <= 0.01)
+		aspect = 16.0 / 9.0;
+	if (zoom <= 0.05 || zoom > 1.0)
+		zoom = 1.0;
+	double cw = w, ch = w / aspect;
 	if (ch > h) {
 		ch = h;
-		cw = h * 16 / 9;
+		cw = h * aspect;
 	}
+	cw *= zoom;
+	ch *= zoom;
+	int32_t iw = (int32_t)cw < 2 ? 2 : (int32_t)cw, ih = (int32_t)ch < 2 ? 2 : (int32_t)ch;
 	/* Where the forward direction falls in the image, from the eye's field of view */
 	double l = tan(s->eye_fov.angleLeft), r = tan(s->eye_fov.angleRight);
 	double u = tan(s->eye_fov.angleUp), d = tan(s->eye_fov.angleDown);
 	double fx = (r - l) > 1e-6 ? -l / (r - l) : 0.5;
 	double fy = (u - d) > 1e-6 ? u / (u - d) : 0.5;
-	int32_t cx = (int32_t)(fx * w) - cw / 2, cy = (int32_t)(fy * h) - ch / 2;
+	int32_t cx = (int32_t)(fx * w) - iw / 2, cy = (int32_t)(fy * h) - ih / 2;
+	if (cx + iw > w)
+		cx = w - iw;
+	if (cy + ih > h)
+		cy = h - ih;
 	if (cx < 0)
 		cx = 0;
 	if (cy < 0)
 		cy = 0;
-	if (cx + cw > w)
-		cx = w - cw;
-	if (cy + ch > h)
-		cy = h - ch;
-	XrRect2Di out = {{eye.offset.x + cx, eye.offset.y + cy}, {cw, ch}};
+	XrRect2Di out = {{eye.offset.x + cx, eye.offset.y + cy}, {iw, ih}};
 	return out;
 }
 
@@ -743,7 +759,7 @@ static void record_frame(session_rec *s, swapchain_rec *sc, VkImage src)
 		return; /* the writer is behind: skip this frame */
 	if (!target_make(s, slot, s->rec_w, s->rec_h, copy_format(sc->format)))
 		return;
-	if (!copy_eye(s, sc, src, record_crop(s), slot))
+	if (!copy_eye(s, sc, src, crop_rect(s, (double)s->rec_w / s->rec_h, s->rec_zoom), slot))
 		return;
 	s->rec_last = now;
 	slot->state = 1;
@@ -810,7 +826,17 @@ static void check_requests(session_rec *s)
 	if (file_exists("screenshot.request")) {
 		char path[600];
 		path_of(path, sizeof path, "screenshot.request");
+		unsigned w = 0, h = 0;
+		double zoom = 1.0;
+		FILE *fp = fopen(path, "r");
+		if (fp) {
+			if (fscanf(fp, "%u %u %lf", &w, &h, &zoom) < 2)
+				w = h = 0;
+			fclose(fp);
+		}
 		unlink(path);
+		s->shot_aspect = (w && h) ? (double)w / h : 0.0;
+		s->shot_zoom = zoom;
 		s->shot_pending = true;
 	}
 	bool want = file_exists("record.on");
@@ -818,15 +844,19 @@ static void check_requests(session_rec *s)
 		char path[600];
 		path_of(path, sizeof path, "record.on");
 		unsigned w = 1920, h = 1080, fps = 30;
+		double zoom = 1.0;
 		FILE *fp = fopen(path, "r");
 		if (fp) {
-			if (fscanf(fp, "%u %u %u", &w, &h, &fps) != 3) {
+			if (fscanf(fp, "%u %u %u %lf", &w, &h, &fps, &zoom) < 3) {
 				w = 1920;
 				h = 1080;
 				fps = 30;
 			}
 			fclose(fp);
 		}
+		if (fps > 120)
+			fps = 120;
+		s->rec_zoom = zoom;
 		s->rec_w = (w & ~1u) ? (w & ~1u) : 1920;
 		s->rec_h = (h & ~1u) ? (h & ~1u) : 1080;
 		s->rec_interval = 1.0 / (fps ? fps : 30);
