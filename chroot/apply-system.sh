@@ -379,8 +379,17 @@ if [ -f "$G/gogglesxr/dashboard/project.godot" ]; then
     "$G"/gogglesxr/dashboard/*.tres "$G"/gogglesxr/dashboard/*.uid "$G"/gogglesxr/dashboard/*.gdextension "$XR_DASH/"
   # The overlay extension (source in gogglesxr/overlay-extension) lets it draw on top of games
   install -D -m755 -t "$XR_DASH/bin" "$G"/gogglesxr/dashboard/bin/*.so
+  # The home environment: the 360-degree picture shown while no game is running
+  install -D -m644 -t "$XR_DASH/environments" "$G"/gogglesxr/dashboard/environments/*.jpg
 else
   warn "GogglesXR dashboard sources missing"
+fi
+# The desktop view (gogglesxr/desktop-grab): pictures of the desktop for the dashboard. KWin only
+# answers programs listed in a desktop file (overlay: org.gogglesos.gogglesxr-desktop-grab.desktop)
+if [ -f "$G/gogglesxr/desktop-grab/gogglesxr-desktop-grab" ]; then
+  install -D -m755 "$G/gogglesxr/desktop-grab/gogglesxr-desktop-grab" "/usr/libexec/$DISTRO_ID/gogglesxr-desktop-grab"
+else
+  warn "GogglesXR desktop view missing"
 fi
 # The capture layer (gogglesxr/capture-layer): screenshots and recordings of the headset view.
 # gogglesxr copies it into each user's home folder, where Steam's game containers can load it

@@ -23,6 +23,8 @@ does the setup that otherwise has to be done by hand:
   gogglesxr record    start recording what the headset shows, or stop and save (Videos/GogglesXR)
   gogglesxr recenter  make where you stand and the way you face the game's new centre
   gogglesxr quit-game close the VR game that is running
+  gogglesxr headset   the connected headset: batteries, ping, stream (--json)
+  gogglesxr pair      let a new headset pair with this PC (shows a PIN; --stop to end)
   gogglesxr app       open the GogglesXR desktop app (--background: tray icon only)
   gogglesxr           open the desktop app (menu entry)
 """
@@ -371,6 +373,9 @@ def dashboard(extra=()):
     for name in os.listdir(src):
         if name.endswith((".gd", ".tscn", ".godot", ".tres", ".uid", ".gdextension")) and os.path.isfile(os.path.join(src, name)):
             shutil.copy2(os.path.join(src, name), os.path.join(project, name))
+    if os.path.isdir(os.path.join(src, "environments")):     # the home environment's pictures
+        shutil.copytree(os.path.join(src, "environments"), os.path.join(project, "environments"), dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns("*.py"))
     # The overlay extension: Godot only loads extensions listed in its project cache
     if os.path.isdir(os.path.join(src, "bin")):
         shutil.copytree(os.path.join(src, "bin"), os.path.join(project, "bin"), dirs_exist_ok=True)
@@ -450,8 +455,136 @@ LAYER_DIR = os.path.join(DATA, "layer")
 LAYER_MANIFEST = os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local/share"),
                               "openxr", "1", "api_layers", "implicit.d", "gogglesxr_capture.json")
 RECORD_STATE = os.path.join(RUNTIME_DIR, "gogglesxr-recording")
-RECORD_SIZE = (1920, 1080)
-RECORD_FPS = 30
+SETTINGS_FILE = os.path.join(CONFIG, "gogglesxr", "settings.json")
+# Recording and screenshot options (settings.json, shared with the desktop app and the dashboard).
+# The first value of each list is the default.
+CAPTURE_CHOICES = {
+    "record_aspect": ["16:9", "9:16", "1:1", "4:3"],        # shape of the video: 9:16 is upright, for phones
+    "record_resolution": [1080, 720, 1440],                 # the short side, in pixels
+    "record_fps": [30, 60, 72, 90],
+    "record_bitrate": [0, 8, 15, 30, 50, 80],               # Mbit/s; 0 = constant quality
+    "record_encoder": ["auto", "cpu", "nvidia", "amd_intel"],
+    "record_codec": ["h264", "h265"],
+    "record_audio": ["game", "game_mic", "none"],
+    "record_view": ["wide", "normal", "narrow"],            # how much of the eye's view is kept
+    "screenshot_area": ["eye", "crop"],                     # the whole eye image, or framed like videos
+}
+VIEW_ZOOM = {"wide": 1.0, "normal": 0.8, "narrow": 0.62}
+
+
+def capture_settings():
+    """The recording options, with anything missing or unknown replaced by its default."""
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = {}
+    out = {}
+    for key, choices in CAPTURE_CHOICES.items():
+        value = data.get(key, choices[0]) if isinstance(data, dict) else choices[0]
+        out[key] = value if value in choices else choices[0]
+    return out
+
+
+def record_size(options):
+    """(width, height) of the video, both even: the short side is the chosen resolution."""
+    a, b = (int(x) for x in options["record_aspect"].split(":"))
+    short = int(options["record_resolution"])
+    if a >= b:
+        return (round(short * a / b) // 2 * 2, short)
+    return (short, round(short * b / a) // 2 * 2)
+
+
+ENCODERS = {   # (setting, codec) -> ffmpeg encoder
+    ("cpu", "h264"): "libx264", ("cpu", "h265"): "libx265",
+    ("nvidia", "h264"): "h264_nvenc", ("nvidia", "h265"): "hevc_nvenc",
+    ("amd_intel", "h264"): "h264_vaapi", ("amd_intel", "h265"): "hevc_vaapi",
+}
+VAAPI_DEVICE = "/dev/dri/renderD128"
+ENCODER_CACHE = os.path.join(RUNTIME_DIR, "gogglesxr-encoders.json")
+
+
+def _encoder_works(kind, codec):
+    """Whether ffmpeg can encode with the graphics card (`kind`) on this PC: a tiny test encode,
+    remembered until the next login."""
+    if kind == "cpu":
+        return True
+    key = f"{kind}-{codec}"
+    try:
+        with open(ENCODER_CACHE, encoding="utf-8") as f:
+            cache = json.load(f)
+    except (OSError, ValueError):
+        cache = {}
+    if key in cache:
+        return bool(cache[key])
+    command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin"]
+    if kind == "amd_intel":
+        if not os.path.exists(VAAPI_DEVICE):
+            return False
+        command += ["-vaapi_device", VAAPI_DEVICE]
+    command += ["-f", "lavfi", "-i", "color=c=black:s=256x256:r=30:d=0.2"]
+    if kind == "amd_intel":
+        command += ["-vf", "format=nv12,hwupload"]
+    command += ["-c:v", ENCODERS[(kind, codec)], "-f", "null", "-"]
+    try:
+        works = subprocess.run(command, capture_output=True, timeout=15).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        works = False
+    cache[key] = works
+    try:
+        with open(ENCODER_CACHE, "w", encoding="utf-8") as f:
+            json.dump(cache, f)
+    except OSError:
+        pass
+    return works
+
+
+def pick_encoder(options):
+    """"cpu", "nvidia" or "amd_intel": the chosen one if it works here, else the best that does."""
+    codec = options["record_codec"]
+    wanted = options["record_encoder"]
+    order = [wanted] if wanted != "auto" else ["nvidia", "amd_intel"]
+    for kind in order:
+        if kind == "cpu" or _encoder_works(kind, codec):
+            return kind
+    return "cpu"
+
+
+def ffmpeg_command(fifo, path, size, options, encoder, audio):
+    """The ffmpeg command that turns the layer's raw frames (and the sound) into the video file.
+    `audio`: "game", "game_mic" or "none" (what can actually be recorded)."""
+    width, height = size
+    fps = int(options["record_fps"])
+    codec = options["record_codec"]
+    mbits = int(options["record_bitrate"])
+    command = ["ffmpeg", "-nostdin", "-loglevel", "error", "-y"]
+    if encoder == "amd_intel":
+        command += ["-vaapi_device", VAAPI_DEVICE]
+    command += ["-thread_queue_size", "64", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{width}x{height}",
+                "-framerate", str(fps), "-use_wallclock_as_timestamps", "1", "-i", fifo]
+    if audio in ("game", "game_mic"):
+        command += ["-thread_queue_size", "1024", "-f", "pulse", "-i", "@DEFAULT_MONITOR@"]
+    upload = "format=nv12,hwupload"        # AMD/Intel: frames go to the graphics card first
+    if audio == "game_mic":
+        mix = "[1:a][2:a]amix=inputs=2:duration=longest:normalize=0[a]"
+        video = "[0:v]" + upload + "[v];" if encoder == "amd_intel" else ""
+        command += ["-thread_queue_size", "1024", "-f", "pulse", "-i", "@DEFAULT_SOURCE@",
+                    "-filter_complex", video + mix, "-map", "[v]" if video else "0:v", "-map", "[a]"]
+    if audio != "none":
+        command += ["-c:a", "aac", "-b:a", "160k"]
+    command += ["-c:v", ENCODERS[(encoder, codec)], "-g", str(fps * 2)]
+    rate = ["-b:v", f"{mbits}M", "-maxrate", f"{mbits}M", "-bufsize", f"{mbits * 2}M"] if mbits else []
+    if encoder == "cpu":
+        command += ["-preset", "veryfast"] + (rate or ["-crf", "20" if codec == "h264" else "23"])
+        command += ["-pix_fmt", "yuv420p"]
+    elif encoder == "nvidia":
+        command += ["-preset", "p4"] + (rate or ["-rc", "vbr", "-cq", "21", "-b:v", "0"]) + ["-pix_fmt", "yuv420p"]
+    else:
+        command += ([] if audio == "game_mic" else ["-vf", upload]) + (rate or ["-qp", "22"])
+    if codec == "h265":
+        command += ["-tag:v", "hvc1"]      # so phones and Windows play it
+    command += ["-fps_mode", "vfr", "-movflags", "+faststart", path]
+    return command
 
 
 def ensure_layer(quiet=True):
@@ -603,7 +736,8 @@ def _read_pam(path):
 
 
 def screenshot():
-    """A picture of what the headset shows (the left eye, full size)."""
+    """A picture of what the headset shows: the whole left-eye image at full size, or framed like
+    the videos (Settings: screenshot_area)."""
     game = capturable_game()
     if not game:
         print(_why_no_capture())
@@ -614,7 +748,11 @@ def screenshot():
         os.remove(shot)
     except OSError:
         pass
-    open(os.path.join(CAPTURE_DIR, "screenshot.request"), "w").close()
+    options = capture_settings()
+    with open(os.path.join(CAPTURE_DIR, "screenshot.request"), "w") as f:
+        if options["screenshot_area"] == "crop":           # framed like videos: same shape and view
+            width, height = record_size(options)
+            f.write(f"{width} {height} {VIEW_ZOOM[options['record_view']]}\n")
     deadline = time.time() + 4
     while not os.path.isfile(shot) and time.time() < deadline:
         time.sleep(0.05)
@@ -707,8 +845,26 @@ def _stop_recording(pid, path):
     return 1
 
 
+def _start_ffmpeg(command):
+    log = os.path.join(CAPTURE_DIR, "ffmpeg.log")
+    with open(log, "w") as err:
+        return subprocess.Popen(command, start_new_session=True, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.DEVNULL, stderr=err)
+
+
+def _new_fifo():
+    fifo = os.path.join(CAPTURE_DIR, "record.fifo")
+    try:
+        os.remove(fifo)
+    except OSError:
+        pass
+    os.mkfifo(fifo, 0o600)
+    return fifo
+
+
 def record():
-    """Start recording what the headset shows (16:9, with the desktop's sound), or stop and save."""
+    """Start recording what the headset shows, or stop and save. The shape, resolution, frame
+    rate, quality, encoder and sound come from the settings (CAPTURE_CHOICES)."""
     pid, path = recording()
     if pid:
         return _stop_recording(pid, path)
@@ -719,45 +875,39 @@ def record():
     if not shutil.which("ffmpeg"):
         print("Recording needs ffmpeg (sudo apt install ffmpeg)")
         return 1
+    options = capture_settings()
     os.makedirs(CAPTURE_DIR, exist_ok=True)
-    fifo = os.path.join(CAPTURE_DIR, "record.fifo")
-    try:
-        os.remove(fifo)
-    except OSError:
-        pass
-    os.mkfifo(fifo, 0o600)
-    width, height = RECORD_SIZE
+    size = record_size(options)
+    audio = options["record_audio"] if _audio_ok() else "none"
+    encoder = pick_encoder(options)
     path = os.path.join(_user_dir("VIDEOS", "Videos"), _capture_name(game) + ".mp4")
-    command = ["ffmpeg", "-nostdin", "-loglevel", "error", "-y",
-               "-thread_queue_size", "64", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{width}x{height}",
-               "-framerate", str(RECORD_FPS), "-use_wallclock_as_timestamps", "1", "-i", fifo]
-    if _audio_ok():
-        command += ["-thread_queue_size", "1024", "-f", "pulse", "-i", "@DEFAULT_MONITOR@",
-                    "-c:a", "aac", "-b:a", "160k"]
-    command += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
-                "-fps_mode", "vfr", "-movflags", "+faststart", path]
-    log = os.path.join(CAPTURE_DIR, "ffmpeg.log")
-    try:
-        with open(log, "w") as err:
-            process = subprocess.Popen(command, start_new_session=True, stdin=subprocess.DEVNULL,
-                                       stdout=subprocess.DEVNULL, stderr=err)
-    except OSError as e:
-        print(f"Couldn't start recording ({e})")
-        return 1
-    with open(RECORD_STATE, "w", encoding="utf-8") as f:
-        f.write(f"{process.pid}\n{path}\n")
-    with open(os.path.join(CAPTURE_DIR, "record.on"), "w") as f:     # the layer starts sending frames
-        f.write(f"{width} {height} {RECORD_FPS}\n")
-    time.sleep(1.5)
-    if process.poll() is not None:
+    request = f"{size[0]} {size[1]} {options['record_fps']} {VIEW_ZOOM[options['record_view']]}\n"
+    on = os.path.join(CAPTURE_DIR, "record.on")
+    for attempt in (encoder, "cpu"):
+        fifo = _new_fifo()
         try:
-            os.remove(os.path.join(CAPTURE_DIR, "record.on"))
-            os.remove(RECORD_STATE)
-        except OSError:
-            pass
-        print("Couldn't start recording (see ~/.cache/gogglesxr/capture/ffmpeg.log)")
-        return 1
-    print("Recording started: " + game)
+            process = _start_ffmpeg(ffmpeg_command(fifo, path, size, options, attempt, audio))
+        except OSError as e:
+            print(f"Couldn't start recording ({e})")
+            return 1
+        with open(RECORD_STATE, "w", encoding="utf-8") as f:
+            f.write(f"{process.pid}\n{path}\n")
+        with open(on, "w") as f:                     # the layer starts sending frames
+            f.write(request)
+        time.sleep(1.5)
+        if process.poll() is None:
+            break
+        for name in (on, RECORD_STATE):              # this encoder failed: try the processor
+            try:
+                os.remove(name)
+            except OSError:
+                pass
+        if attempt == "cpu":
+            print("Couldn't start recording (see ~/.cache/gogglesxr/capture/ffmpeg.log)")
+            return 1
+        time.sleep(0.5)                              # let the layer notice and close its end
+    kind = {"cpu": "processor", "nvidia": "NVIDIA", "amd_intel": "AMD/Intel"}[attempt]
+    print(f"Recording started: {game} ({size[0]}x{size[1]}, {options['record_fps']} fps, {kind} encoder)")
     return 0
 
 
@@ -802,95 +952,68 @@ def quit_game():
     return 0 if not os.path.exists(f"/proc/{pid}") else 1
 
 
-# Runs with the VR runtime's own control library (libmonado). Kept as source text so it can also
-# run inside the runtime's Flatpak when the library can't be loaded on the desktop side.
-RECENTER_CODE = r"""
-import ctypes, sys
-
-class Pose(ctypes.Structure):
-    _fields_ = [(n, ctypes.c_float) for n in ("qx", "qy", "qz", "qw", "x", "y", "z")]
-
-LOCAL, STAGE = 1, 3
-lib = ctypes.CDLL(sys.argv[1])
-root = ctypes.c_void_p()
-lib.mnd_root_create.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
-lib.mnd_root_destroy.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
-lib.mnd_root_recenter_local_spaces.argtypes = [ctypes.c_void_p]
-if lib.mnd_root_create(ctypes.byref(root)) != 0:
-    print("NOT-CONNECTED")
-    sys.exit(3)
-try:
-    # 1. Seated games (the LOCAL space): the runtime puts its centre where the head is now,
-    #    facing the way the head faces (turning only around the vertical axis)
-    if lib.mnd_root_recenter_local_spaces(root) != 0:
-        print("FAILED")
-        sys.exit(4)
-    # 2. Standing and room-scale games (the STAGE space, which most SteamVR games use): move the
-    #    play area's centre to the same place, keeping the floor height
-    if hasattr(lib, "mnd_root_set_reference_space_offset"):
-        for name in ("mnd_root_get_reference_space_offset", "mnd_root_set_reference_space_offset"):
-            getattr(lib, name).argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(Pose)]
-        local, stage = Pose(), Pose()
-        if (lib.mnd_root_get_reference_space_offset(root, LOCAL, ctypes.byref(local)) == 0 and
-                lib.mnd_root_get_reference_space_offset(root, STAGE, ctypes.byref(stage)) == 0):
-            new = Pose(local.qx, local.qy, local.qz, local.qw, local.x, stage.y, local.z)
-            if lib.mnd_root_set_reference_space_offset(root, STAGE, ctypes.byref(new)) != 0:
-                print("LOCAL-ONLY")
-                sys.exit(0)
-            print("OK")
-            sys.exit(0)
-    print("LOCAL-ONLY")
-finally:
-    lib.mnd_root_destroy(ctypes.byref(root))
-"""
-
-
-def _libmonado():
-    """The runtime's control library, from the active runtime's manifest:
-    (path on the desktop, path inside the runtime's Flatpak or None)."""
-    manifest = os.path.realpath(ACTIVE_RUNTIME)
-    try:
-        with open(manifest, encoding="utf-8") as f:
-            lib = json.load(f)["runtime"].get("MND_libmonado_path")
-    except (OSError, ValueError, KeyError):
-        return None, None
-    if not lib:
-        return None, None
-    lib = os.path.normpath(os.path.join(os.path.dirname(manifest), lib))
-    inside = None
-    if "/files/" in lib:                   # a Flatpak app's files are at /app inside its sandbox
-        inside = "/app/" + lib.split("/files/", 1)[1]
-    return lib, inside
+def load_engine():
+    """The streaming engine in use (engine.py): WiVRn today, Goggles Link later."""
+    sys.path.insert(0, APP_DIR)
+    import engine
+    return engine.current()
 
 
 def recenter():
     """Make where you stand and the way you face the new centre and "forward" of the game.
     The VR runtime moves the game's world (its seated and its standing/room-scale spaces);
     a VR app can't do that for another app by itself."""
-    lib, inside = _libmonado()
-    if not lib or not os.path.isfile(lib) or not os.path.exists(IPC_SOCKET):
+    if not os.path.exists(IPC_SOCKET) and not os.environ.get("GOGGLESXR_FAKE_HEADSET"):
         print("Can't recentre the game: the VR runtime isn't running")
         return 1
-    answer = ""
-    try:                                   # on the desktop side first: quickest
-        answer = subprocess.run([sys.executable, "-I", "-c", RECENTER_CODE, lib], capture_output=True,
-                                text=True, timeout=10).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        pass
-    if not answer and inside:              # the library needs the runtime's own system libraries
-        try:
-            answer = subprocess.run(["flatpak", "run", "--command=python3", ENGINE_APP, "-I", "-c",
-                                     RECENTER_CODE, inside], capture_output=True, text=True,
-                                    timeout=30).stdout.strip()
-        except (OSError, subprocess.SubprocessError):
-            pass
-    answer = answer.splitlines()[-1] if answer else ""
+    answer = load_engine().recenter()
     messages = {"OK": "Game recentred",
                 "LOCAL-ONLY": "Recentred (this runtime can only move seated games)",
                 "NOT-CONNECTED": "Can't recentre the game: no headset is connected",
                 "FAILED": "The VR runtime couldn't recentre right now: hold still and try again"}
     print(messages.get(answer, "Can't recentre the game: the VR runtime's control library didn't load"))
     return 0 if answer in ("OK", "LOCAL-ONLY") else 1
+
+
+def headset_command(args):
+    """The connected headset: name, batteries, ping, stream. --json for the dashboard."""
+    info = load_engine().headset()
+    if "--json" in args:
+        json.dump(info, sys.stdout)
+        print()
+        return 0 if info.get("connected") else 1
+    if not info.get("running"):
+        print(f"The streaming engine ({info.get('engine_name')}) isn't running. Start it with: gogglesxr start")
+        return 1
+    if not info.get("connected"):
+        print("No headset is connected.")
+        return 1
+    print(f"Headset: {info.get('name') or 'connected'} (through {info.get('engine_name')})")
+    names = {"head": "Headset", "left": "Left controller", "right": "Right controller"}
+    for key, battery in sorted(info.get("battery", {}).items()):
+        print(f"  {names.get(key, key)} battery: {battery['charge']}%" + (" (charging)" if battery.get("charging") else ""))
+    if info.get("ping_ms") is not None:
+        print(f"  Ping: {info['ping_ms']:g} ms over {'a USB cable' if info.get('connection') == 'usb' else 'the network'}")
+    if info.get("bitrate_mbps"):
+        print(f"  Stream: {info['bitrate_mbps']:g} Mbps")
+    if info.get("refresh_rate"):
+        print(f"  Refresh rate: {info['refresh_rate']:g} Hz")
+    return 0
+
+
+def pair_command(args):
+    """Let a new headset pair with this PC: prints the PIN to type in the headset."""
+    engine = load_engine()
+    if "--stop" in args:
+        engine.disable_pairing()
+        print("Pairing stopped")
+        return 0
+    pin = engine.enable_pairing(120)
+    if not pin:
+        print(f"Couldn't start pairing: is the streaming engine ({engine.name}) running? Start it with: gogglesxr start")
+        return 1
+    print(f"Pairing for 2 minutes. Type this PIN in the headset: {pin}")
+    return 0
 
 
 def gui():
@@ -929,7 +1052,8 @@ def main():
     actions = {"on": turn_on, "off": turn_off, "status": status, "fix": fix, "start": start, "--gui": gui,
                "dashboard": lambda: dashboard(sys.argv[2:]), "library": lambda: library_command(sys.argv[2:]),
                "app": lambda: app(sys.argv[2:]), "screenshot": screenshot, "record": record,
-               "quit-game": quit_game, "recenter": recenter, "recentre": recenter}
+               "quit-game": quit_game, "recenter": recenter, "recentre": recenter,
+               "headset": lambda: headset_command(sys.argv[2:]), "pair": lambda: pair_command(sys.argv[2:])}
     if cmd not in actions:
         print(__doc__.strip(), file=sys.stderr)
         return 2

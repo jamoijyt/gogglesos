@@ -18,6 +18,8 @@ signal record_requested
 signal quit_requested
 signal smoothing_changed(amount: float)
 signal scale_changed(factor: float)
+signal setting_changed(key: String, value: Variant)   # saved to settings.json by main.gd
+signal big_screen_toggled(on: bool)
 
 const SIZE := Vector2(1280, 860)
 const PANEL_SIZE := Vector2(1280, 736)
@@ -60,6 +62,13 @@ var _record_button: Button
 var _quit_button: Button
 var _quit_armed_until := 0
 var _smoothing_slider: HSlider
+var _choices := {}                        # setting key -> [{value: Button}] (a setting can be shown twice)
+var _stats := {}                          # status strip: "head", "left", "right", "ping" -> [title, value]
+var _stream_rows: VBoxContainer           # Settings > Streaming
+var _desktop_view: TextureRect
+var _desktop_note: Label
+var _big_button: Button
+var _settings_tabs := {}
 var _tween: Tween
 # swipe state
 var _swiping := false
@@ -328,7 +337,10 @@ func _build_game(body: Control) -> void:
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	side.add_child(spacer)
-	side.add_child(_label("Screenshots and recordings capture the game's window on the desktop and are saved to Pictures/GogglesXR and Videos/GogglesXR.", &"Muted", true))
+	side.add_child(_label("Screenshots and clips of the headset view go to Pictures and Videos (GogglesXR folder). Shape and quality: Settings > Recording.", &"Muted", true))
+	var clear_of_hint := Control.new()       # room for the "▼ Desktop" hint
+	clear_of_hint.custom_minimum_size = Vector2(0, 26)
+	side.add_child(clear_of_hint)
 	set_game({})
 	set_recording(false)
 
@@ -425,18 +437,50 @@ func _build_quick(body: Control) -> void:
 
 
 func _build_desktop(body: Control) -> void:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 14)
+	body.add_child(box)
 	var well := PanelContainer.new()
 	well.theme_type_variation = &"Well"
-	body.add_child(well)
-	var box := VBoxContainer.new()
-	box.alignment = BoxContainer.ALIGNMENT_CENTER
-	well.add_child(box)
-	var title := _label("Your desktop will appear here", &"Title")
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	box.add_child(title)
-	var note := _label("The laser will work as the mouse: trigger to click, stick to scroll.", &"Muted")
-	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	box.add_child(note)
+	well.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	well.clip_contents = true
+	box.add_child(well)
+	_desktop_view = TextureRect.new()
+	_desktop_view.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_desktop_view.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_desktop_view.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	well.add_child(_desktop_view)
+	_desktop_note = _label("Starting the desktop view…", &"Muted", true)
+	_desktop_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_desktop_note.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	well.add_child(_desktop_note)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	box.add_child(row)
+	for button in _choice_buttons("desktop_screen", [["all", "All screens"], ["active", "Active screen"]]):
+		row.add_child(button)
+	_big_button = _button("Big screen")
+	_big_button.toggle_mode = true
+	_big_button.theme_type_variation = &"Toggle"
+	_big_button.toggled.connect(func(on): big_screen_toggled.emit(on))
+	row.add_child(_big_button)
+	var note := _label("View only for now: use the PC's mouse and keyboard to control it.", &"Muted", true)
+	note.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	note.size_flags_stretch_ratio = 1.6
+	note.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(note)
+
+
+## The live picture of the desktop (from main.gd), or a message saying why there is none.
+func set_desktop(texture: Texture2D, message := "") -> void:
+	_desktop_view.texture = texture
+	_desktop_note.visible = texture == null or message != ""
+	_desktop_note.text = message if message != "" else "Starting the desktop view…"
+	_desktop_view.modulate.a = 0.35 if message != "" else 1.0
+
+
+func set_big_screen(on: bool) -> void:
+	_big_button.set_pressed_no_signal(on)
 
 
 func _build_library(body: Control) -> void:
@@ -514,10 +558,13 @@ func _build_settings(body: Control) -> void:
 	var pages := Control.new()
 	pages.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(pages)
+	var clear_of_hint := Control.new()       # room for the "Current Game ▶" hint on the right edge
+	clear_of_hint.custom_minimum_size = Vector2(104, 0)
+	row.add_child(clear_of_hint)
 	var group := ButtonGroup.new()
 	var sections := {
-		"Appearance": _settings_appearance, "Display": _settings_soon, "Streaming": _settings_soon,
-		"Audio": _settings_soon, "Controllers": _settings_controllers, "Play area": _settings_soon, "About": _settings_about,
+		"Appearance": _settings_appearance, "Controllers": _settings_controllers, "Recording": _settings_recording,
+		"Home": _settings_home, "Desktop": _settings_desktop, "Streaming": _settings_streaming, "About": _settings_about,
 	}
 	for section in sections:
 		var page := VBoxContainer.new()
@@ -534,6 +581,13 @@ func _build_settings(body: Control) -> void:
 		tab.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		tab.toggled.connect(func(on): page.visible = on)
 		cats.add_child(tab)
+		_settings_tabs[section] = tab
+
+
+## Open a section of the Settings panel ("Recording", "Home"...).
+func show_settings(section: String) -> void:
+	if _settings_tabs.has(section):
+		(_settings_tabs[section] as Button).button_pressed = true
 
 
 func _settings_appearance(page: Control) -> void:
@@ -548,8 +602,36 @@ func _settings_controllers(page: Control) -> void:
 	page.add_child(_label("Steadies the laser. Higher values hold the pointer stiller on small buttons; 0 follows your hand exactly. Fast movements are never slowed down.", &"Muted", true))
 
 
-func _settings_soon(page: Control) -> void:
-	page.add_child(_label("These settings arrive with GogglesXR's own runtime.", &"Muted", true))
+## Screenshots and clips (the gogglesxr command reads these when you press Record clip)
+func _settings_recording(page: Control) -> void:
+	page.add_theme_constant_override("separation", 10)
+	_choice_row(page, "Shape", "record_aspect", [["16:9", "16:9"], ["9:16", "9:16 upright"], ["1:1", "1:1"], ["4:3", "4:3"]])
+	_choice_row(page, "Resolution", "record_resolution", [[1080, "1080p"], [720, "720p"], [1440, "1440p"]])
+	_choice_row(page, "Frame rate", "record_fps", [[30, "30"], [60, "60"], [72, "72"], [90, "90"]])
+	_choice_row(page, "Quality", "record_bitrate", [[0, "Auto"], [8, "8 Mb/s"], [15, "15"], [30, "30"], [50, "50"]])
+	_choice_row(page, "View", "record_view", [["wide", "Wide"], ["normal", "Normal"], ["narrow", "Narrow"]])
+	_choice_row(page, "Sound", "record_audio", [["game", "Game"], ["game_mic", "Game + mic"], ["none", "None"]])
+	_choice_row(page, "Screenshots", "screenshot_area", [["eye", "Whole view"], ["crop", "Framed like clips"]])
+	page.add_child(_label("Encoder and video format are in the GogglesXR app on the desktop.", &"Muted", true))
+
+
+## What you see around you when no game is running
+func _settings_home(page: Control) -> void:
+	_choice_row(page, "Surroundings", "environment", [["goggles", "Goggles night"], ["custom", "My picture"], ["none", "Black"]])
+	page.add_child(_label("Shown around you while no game is running, and hidden as soon as a game starts. \"My picture\" uses a 360° photo you choose in the GogglesXR app on the desktop (VR settings > Home environment).", &"Muted", true))
+
+
+func _settings_desktop(page: Control) -> void:
+	_choice_row(page, "Screen", "desktop_screen", [["all", "All screens"], ["active", "Active screen"]])
+	_choice_row(page, "Frame rate", "desktop_fps", [[15, "15"], [10, "10"], [30, "30"]])
+	page.add_child(_label("The Desktop panel (below Current Game) shows your PC's desktop. Big screen floats a large copy of it in front of you, also while a game runs. Higher frame rates use more of the PC's power.", &"Muted", true))
+
+
+func _settings_streaming(page: Control) -> void:
+	_stream_rows = VBoxContainer.new()
+	_stream_rows.add_theme_constant_override("separation", 8)
+	page.add_child(_stream_rows)
+	page.add_child(_label("Change the encoder, codec, connection and paired headsets in the GogglesXR app on the desktop (VR settings).", &"Muted", true))
 
 
 func _settings_about(page: Control) -> void:
@@ -588,13 +670,114 @@ func _build_strip() -> void:
 		dot.position = Vector2(20, 20) + Vector2(POS[id]) * 19.0
 		map.add_child(dot)
 		_map[id] = dot
+	var where_box := VBoxContainer.new()
+	where_box.add_theme_constant_override("separation", -2)
+	where_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	where_box.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(where_box)
 	_where = _label("", &"Where")
-	_where.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_where.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	row.add_child(_where)
-	var help := _label("Grip + swipe: change panel    Grip this bar: move    Trigger: select", &"Muted")
-	help.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	row.add_child(help)
+	where_box.add_child(_where)
+	where_box.add_child(_label("Grip + swipe: panels  ·  Grip this bar: move", &"Small"))
+	# Headset, controllers and connection
+	for key in ["head", "left", "right", "ping"]:
+		var stat := VBoxContainer.new()
+		stat.add_theme_constant_override("separation", -2)
+		stat.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		stat.custom_minimum_size = Vector2(92, 0)
+		row.add_child(stat)
+		var title := _label("", &"Eyebrow")
+		var value := _label("", &"Stat")
+		stat.add_child(title)
+		stat.add_child(value)
+		_stats[key] = [title, value]
+	set_headset({})
+
+
+## The headset's state from `gogglesxr headset --json` (main.gd asks every few seconds): batteries
+## and ping on the status strip, and the details on Settings > Streaming.
+func set_headset(info: Dictionary) -> void:
+	if _stats.is_empty():
+		return
+	var connected: bool = info.get("connected", false)
+	var battery: Dictionary = info.get("battery", {})
+	var titles := {"head": "HEADSET", "left": "LEFT", "right": "RIGHT"}
+	for key in titles:
+		var title: Label = _stats[key][0]
+		var value: Label = _stats[key][1]
+		var b: Dictionary = battery.get(key, {})
+		title.get_parent().visible = connected and (key == "head" or not b.is_empty())
+		title.text = titles[key] + ("  +" if b.get("charging", false) else "")
+		value.text = ("%d%%" % int(b.charge)) if not b.is_empty() else "On"
+		var low: bool = not b.is_empty() and int(b.charge) <= 20 and not b.get("charging", false)
+		value.add_theme_color_override("font_color", Color("ff9c8a") if low else INK)
+	var ping: Variant = info.get("ping_ms")
+	var ping_title: Label = _stats.ping[0]
+	var ping_value: Label = _stats.ping[1]
+	ping_title.get_parent().visible = connected and ping != null
+	ping_title.text = "USB" if info.get("connection") == "usb" else "PING"
+	if ping != null:
+		ping_value.text = "%d ms" % roundi(float(ping))
+		var colour := ACCENT if float(ping) < 20 else (ACCENT_2 if float(ping) < 45 else Color("ff9c8a"))
+		ping_value.add_theme_color_override("font_color", colour)
+	if not connected:
+		_stats.head[0].get_parent().visible = info.has("connected")
+		_stats.head[0].text = "HEADSET"
+		_stats.head[1].text = "Not connected"
+		_stats.head[1].add_theme_color_override("font_color", MUTED)
+	_fill_stream_rows(info)
+
+
+func headset_text() -> String:
+	var parts := []
+	for key in ["head", "left", "right", "ping"]:
+		if (_stats[key][0] as Label).get_parent().visible:
+			parts.append((_stats[key][0] as Label).text + " " + (_stats[key][1] as Label).text)
+	return ", ".join(parts)
+
+
+func _fill_stream_rows(info: Dictionary) -> void:
+	if _stream_rows == null:
+		return
+	for child in _stream_rows.get_children():
+		child.queue_free()
+	var rows := [["Engine", str(info.get("engine_name", "WiVRn"))]]
+	if not info.get("connected", false):
+		rows.append(["Headset", "Not connected"])
+	else:
+		rows.append(["Headset", str(info.get("name", "Connected"))])
+		if info.get("bitrate_mbps") != null:
+			rows.append(["Stream", "%s Mbps" % str(info.bitrate_mbps)])
+		if info.get("refresh_rate") != null:
+			rows.append(["Refresh rate", "%d Hz" % roundi(float(info.refresh_rate))])
+		if info.get("connection") != null:
+			rows.append(["Connection", ("USB cable" if info.connection == "usb" else "Wi-Fi / network") +
+					("  ·  %d ms" % roundi(float(info.ping_ms)) if info.get("ping_ms") != null else "")])
+		var codecs: Array = info.get("codecs", [])
+		if not codecs.is_empty():
+			rows.append(["Video", ", ".join(codecs.map(func(c): return str(c).to_upper()))])
+	for item in rows:
+		var line := HBoxContainer.new()
+		var name_label := _label(item[0], &"Muted")
+		name_label.custom_minimum_size = Vector2(200, 0)
+		line.add_child(name_label)
+		line.add_child(_label(item[1]))
+		_stream_rows.add_child(line)
+
+
+## Show the saved settings on the choice buttons (from settings.json, by main.gd).
+func apply_settings(prefs: Dictionary) -> void:
+	for key in _choices:
+		if prefs.has(key):
+			_select_choice(key, prefs[key])
+
+
+## The chosen value of a setting's buttons.
+func choice(key: String) -> Variant:
+	for buttons in _choices.get(key, []):
+		for value in buttons:
+			if (buttons[value] as Button).button_pressed:
+				return value
+	return null
 
 
 # ------------------------------------------------------------------ actions
@@ -643,6 +826,56 @@ func _button(text: String, primary := false) -> Button:
 	if primary:
 		button.theme_type_variation = &"Primary"
 	return button
+
+
+## A row of buttons where one is chosen, saved as setting `key` (options: [[value, label]]; the
+## first is the default).
+func _choice_row(parent: Control, text: String, key: String, options: Array) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	parent.add_child(row)
+	var label := _label(text)
+	label.custom_minimum_size = Vector2(170, 0)
+	row.add_child(label)
+	for button in _choice_buttons(key, options):
+		button.custom_minimum_size = Vector2(0, 52)
+		row.add_child(button)
+
+
+func _choice_buttons(key: String, options: Array) -> Array:
+	var group := ButtonGroup.new()
+	var buttons := []
+	var by_value := {}
+	if not _choices.has(key):
+		_choices[key] = []
+	_choices[key].append(by_value)
+	for option in options:
+		var button := _button(str(option[1]))
+		button.toggle_mode = true
+		button.button_group = group
+		button.theme_type_variation = &"Toggle"
+		button.button_pressed = option == options[0]
+		var value: Variant = option[0]
+		button.pressed.connect(func():
+			_select_choice(key, value)        # the same setting shown elsewhere follows
+			setting_changed.emit(key, value))
+		by_value[value] = button
+		buttons.append(button)
+	return buttons
+
+
+func _select_choice(key: String, value: Variant) -> void:
+	for buttons in _choices.get(key, []):
+		var found := false
+		for option in buttons:
+			# settings.json numbers come back as floats: 30.0 is the same choice as 30
+			var numbers: bool = typeof(option) in [TYPE_INT, TYPE_FLOAT] and typeof(value) in [TYPE_INT, TYPE_FLOAT]
+			found = found or option == value or (numbers and float(option) == float(value))
+		if not found:
+			continue                          # an unknown value: keep what is shown
+		for option in buttons:
+			var numbers: bool = typeof(option) in [TYPE_INT, TYPE_FLOAT] and typeof(value) in [TYPE_INT, TYPE_FLOAT]
+			(buttons[option] as Button).set_pressed_no_signal(option == value or (numbers and float(option) == float(value)))
 
 
 ## Mark a control that doesn't do anything yet.
@@ -705,8 +938,11 @@ func _make_theme() -> Theme:
 	t.set_color("font_color", "Label", INK)
 	t.set_stylebox("panel", "PanelContainer", _box(GLASS, 26, Color(ACCENT, 0.3), 1, 34))
 
-	for variation in ["Title", "Eyebrow", "Muted", "Clock", "Where", "Toast"]:
+	for variation in ["Title", "Eyebrow", "Muted", "Clock", "Where", "Toast", "Small", "Stat"]:
 		t.set_type_variation(variation, "Label")
+	t.set_font_size("font_size", "Small", 16)
+	t.set_color("font_color", "Small", MUTED)
+	t.set_font_size("font_size", "Stat", 24)
 	t.set_font_size("font_size", "Title", 34)
 	t.set_font_size("font_size", "Eyebrow", 17)
 	t.set_color("font_color", "Eyebrow", ACCENT)

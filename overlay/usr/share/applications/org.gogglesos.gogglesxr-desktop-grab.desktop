@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=GogglesXR desktop view
+Comment=Shows your desktop inside the VR headset (used by the GogglesXR dashboard)
+Exec=/usr/libexec/gogglesos/gogglesxr-desktop-grab
+Icon=video-display
+NoDisplay=true
+# KWin only gives pictures of the desktop to programs listed here (no prompt, so it also works
+# while you are in the headset)
+X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2

@@ -46,7 +46,7 @@ ISO that keeps Kubuntu's Secure Boot chain, live session and Calamares installer
 
 | Area | What Goggles OS adds |
 |---|---|
-| VR | **GogglesXR**: streams VR to standalone headsets such as the Meta Quest and runs SteamVR games with no per-game setup. Desktop app (status, game library with cover art, settings) that starts at login, and a five-panel dashboard inside the headset, drawn on top of your game, with your real controller models, screenshots and clips of the headset view, and recentring with a countdown. Steam and `steam-devices` udev rules (Index, Vive, Quest, controllers) |
+| VR | **GogglesXR**: streams VR to standalone headsets such as the Meta Quest and runs SteamVR games with no per-game setup. Desktop app (headset status with batteries and ping, game library with cover art, VR and streaming settings, headset pairing) that starts at login, and a five-panel dashboard inside the headset, drawn on top of your game, with your real controller models, screenshots and clips of the headset view (shape, frame rate, quality and encoder are yours to choose), your desktop on a panel or a big screen, a 360° home environment between games, battery and ping on the status bar, and recentring with a countdown. Steam and `steam-devices` udev rules (Index, Vive, Quest, controllers) |
 | GPU | Mesa + Vulkan for AMD/Intel (64- and 32-bit). The `nvidia` variant also includes NVIDIA 580 with prebuilt, signed modules (GTX 900 to RTX 40, including GTX 1080) |
 | Kernel | Stock Ubuntu kernel with `preempt=full threadirqs` (full preemption), plus SteamOS-style sysctls (`max_map_count`, no split-lock penalty, low swappiness) |
 | Gaming | GameMode, MangoHud, GOverlay, Protontricks, ProtonUp-Qt (Flatpak, for Proton-GE), Flathub enabled |
@@ -149,6 +149,8 @@ chroot/apply-system.sh        system configuration shared by the build and Goggl
 gogglesxr/dashboard/          GogglesXR dashboard (Godot 4 project): five panels, lasers, grip + swipe
 gogglesxr/overlay-extension/  small C extension that lets the dashboard draw on top of a running game
 gogglesxr/capture-layer/      OpenXR API layer for screenshots and recordings of the headset view
+gogglesxr/desktop-grab/       helper that gives the dashboard live pictures of the desktop (KWin)
+gogglesxr/dashboard/environments/  the 360° home environment and the script that draws it
 chroot/visor-panel.py         draws the Visor taskbar and popup backgrounds for the Plasma theme
 chroot/splash/                startup splash (QML)
 chroot/sddm-theme/            login screen (SDDM theme, QML)
@@ -164,7 +166,7 @@ overlay/                      files installed into the system (/etc, /usr)
   usr/bin/goggles-panel       taskbar layout switcher (Visor / wide)
   usr/bin/goggles-hud         show or remove the Goggles HUD widget
   usr/bin/gogglesxr           GogglesXR command: setup, self-check, dashboard, desktop app
-  usr/share/gogglesos/gogglesxr/   GogglesXR desktop app (app.py) and game library (library.py)
+  usr/share/gogglesos/gogglesxr/   GogglesXR desktop app (app.py), game library (library.py) and streaming engines (engine.py)
   usr/bin/goggles-update      Goggles Update (plus its daily check in usr/lib/systemd/user/)
   usr/libexec/gogglesos/      lock-screen patch + re-apply hook run after package updates
 third_party/                  pinned, checksum-verified copies of upstream tools, and the controller-model checksums (see its README)
