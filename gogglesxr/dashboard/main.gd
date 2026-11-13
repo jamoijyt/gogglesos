@@ -7,6 +7,8 @@ extends Node3D
 ##                  Hold grip on the status bar = move the dashboard; while holding, push the
 ##                  stick forward or back to send it further away (bigger) or closer (smaller).
 ##                  Your controllers are drawn as models while the dashboard is open.
+##                  Recentre counts down 3-2-1 (look straight ahead), then the runtime makes
+##                  where you stand and the way you face the game's new centre.
 ## Without a headset it runs in a window for testing: left mouse = trigger,
 ## right mouse (hold and drag) = grip, mouse wheel = stick, arrow keys = change panel.
 ## Where you leave the dashboard is remembered (user://dashboard.cfg).
@@ -18,6 +20,7 @@ extends Node3D
 
 const DashboardUI := preload("res://dashboard_ui.gd")
 const SteamLibrary := preload("res://steam_library.gd")
+const ControllerModels := preload("res://controller_models.gd")
 
 const SCREEN_WIDTH := 1.35                # metres, at the reference distance
 const REFERENCE_DISTANCE := 1.5           # the dashboard grows and shrinks with distance from here
@@ -56,6 +59,12 @@ var pointer := Vector2(-1, -1)            # last pointer position on the dashboa
 var grab_start := Vector2.ZERO
 var mouse_buttons := 0
 var scroll_wait := 0.0
+var system_name := ""                     # the headset, as the runtime names it ("Meta Quest 3 on WiVRn")
+var countdown_left := 0.0                 # recentre countdown: seconds to go
+var countdown_phase := ""                 # "", "count", "wait" (runtime working), "done" (showing the result)
+var countdown_root: Node3D                # the countdown's numbers, held in front of your eyes
+var countdown_number: Label3D
+var countdown_text: Label3D
 
 
 func _ready() -> void:
@@ -90,13 +99,14 @@ func _ready() -> void:
 	world.environment.background_mode = Environment.BG_CLEAR_COLOR
 	world.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	world.environment.ambient_light_color = Color(0.55, 0.7, 0.65)
-	world.environment.ambient_light_energy = 0.6
+	world.environment.ambient_light_energy = 1.0
 	add_child(world)
 	camera = XRCamera3D.new()
 	camera.position = Vector3(0, SCREEN_HEIGHT_ABOVE_FLOOR, 0)
 	origin.add_child(camera)
 	for side in ["left", "right"]:
 		hands[side] = _make_hand(origin, side)
+	_make_countdown()
 
 	screen = MeshInstance3D.new()
 	var quad := QuadMesh.new()
@@ -116,6 +126,7 @@ func _ready() -> void:
 		get_viewport().use_xr = true
 		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 		ui.set_status("Running in the headset through %s." % xr.get_system_info().get("XRRuntimeName", "an OpenXR runtime"))
+		system_name = str(xr.get_system_info().get("XRSystemName", ""))
 	else:
 		centre = Vector3(0, SCREEN_HEIGHT_ABOVE_FLOOR, -0.8)     # closer, so it fills the preview window
 		ui.set_status("No headset found, so this is the desktop preview. Start the runtime (gogglesxr start), connect the headset and run the dashboard again.")
@@ -286,6 +297,9 @@ func _parse_game(text: String) -> Dictionary:
 func _exit_tree() -> void:
 	if game_thread:
 		game_thread.wait_to_finish()
+	for side in hands:
+		if hands[side].loader:
+			hands[side].loader.wait_to_finish()
 	for job in tool_jobs:
 		job.wait_to_finish()
 
@@ -325,13 +339,15 @@ func _make_hand(origin: XROrigin3D, side: String) -> Dictionary:
 	held.pose = &"grip"
 	origin.add_child(held)
 	return {"controller": controller, "laser": laser, "dot": dot, "trigger": false, "grip": false,
-			"from": Vector3.ZERO, "dir": Vector3.ZERO, "held": held, "model": null, "profile": "?", "side": side}
+			"from": Vector3.ZERO, "dir": Vector3.ZERO, "held": held, "model": null, "model_id": "",
+			"loader": null, "responses": [], "side": side}
 
 
 # ------------------------------------------------------------------ controller models
-## Drawn while the dashboard is open, so you can see your hands over the game. These are
-## Goggles-styled stand-ins built from simple shapes, chosen by the kind of controller the
-## runtime reports. They are not the manufacturers' own models.
+## Drawn while the dashboard is open, so you can see your hands over the game: the real model
+## of your controller (controller_models.gd), with its buttons, trigger and stick moving as you
+## press them. If the model files aren't installed, Goggles-styled stand-ins built from simple
+## shapes are drawn instead (below), with the pressed buttons lit up.
 const BODY := Color(0.2, 0.31, 0.28)
 
 func _controller_kind(profile: String) -> String:
@@ -424,21 +440,41 @@ func _make_controller_model(kind: String, side: String) -> Node3D:
 	return model
 
 
-## Give each hand the model for its controller, and light the buttons that are pressed.
+## Give each hand the model for its controller (loaded on a thread, so a frame is never held
+## up), and move or light the parts that are pressed.
 func _update_models() -> void:
 	for side in hands:
 		var hand: Dictionary = hands[side]
 		var tracker := XRServer.get_tracker(hand.held.tracker) as XRPositionalTracker
 		var profile: String = tracker.profile if tracker else ""
-		if profile != hand.profile:
-			hand.profile = profile
+		var wanted := ControllerModels.pick(system_name, profile)
+		if wanted != "" and wanted != hand.model_id and hand.loader == null:
+			hand.model_id = wanted
+			var loader := Thread.new()
+			loader.set_meta("profile", profile)
+			loader.start(ControllerModels.load_model.bind(wanted, side))
+			hand.loader = loader
+		if hand.loader and not hand.loader.is_alive():
+			var loaded: Dictionary = hand.loader.wait_to_finish()
+			var for_profile: String = hand.loader.get_meta("profile")
+			hand.loader = null
 			if hand.model:
 				hand.model.queue_free()
-			hand.model = _make_controller_model(_controller_kind(profile), side)
+			if loaded.is_empty():           # not installed: the simple stand-in
+				hand.model = _make_controller_model(_controller_kind(for_profile), side)
+				hand.responses = []
+			else:
+				hand.model = loaded.scene
+				hand.responses = loaded.responses
 			hand.held.add_child(hand.model)
 		var model: Node3D = hand.model
+		if model == null:
+			continue
 		model.visible = shown and open_amount > 0.5 and hand.held.get_has_tracking_data()
 		if not model.visible:
+			continue
+		if not hand.responses.is_empty():
+			ControllerModels.animate(hand.responses, ControllerModels.read_inputs(hand.controller))
 			continue
 		var lights: Dictionary = model.get_meta("lights")
 		var dim: Color = model.get_meta("dim")
@@ -474,9 +510,11 @@ func _collect_tool_jobs() -> void:
 		if answer != "":
 			ui.say(answer)
 		if job.get_meta("command") == "record":
-			ui.set_recording(answer.begins_with("Recording the screen"))
+			ui.set_recording(answer.begins_with("Recording started"))
 		if job.get_meta("command") == "quit-game":
 			game_wait = 0.0                   # look again straight away
+		if job.get_meta("command") == "recenter" and countdown_phase == "wait":
+			_countdown_finish(answer if answer != "" else "Couldn't recentre")
 
 
 func _head() -> Vector3:
@@ -507,16 +545,102 @@ func _reset_place() -> void:
 	_apply_screen()
 
 
-## Recentre: the runtime makes the way you are facing the new "forward" for the game, and the
-## dashboard returns to its place in front of you.
+# ------------------------------------------------------------------ recentring
+## Recentre: the dashboard steps aside and counts down 3-2-1 so you can stand where you want to
+## be and look the way you want to face. Then the runtime makes that the game's new centre and
+## "forward" (gogglesxr recenter moves both the seated and the standing/room-scale spaces), and
+## the dashboard comes back in front of you. In overlay mode you go straight back to the game.
+## Pressing Recentre again, or the menu button, during the countdown cancels it.
+const COUNTDOWN_SECONDS := 3.0
+
+func _make_countdown() -> void:
+	countdown_root = Node3D.new()
+	countdown_root.position = Vector3(0, 0, -1.1)
+	countdown_root.visible = false
+	camera.add_child(countdown_root)      # follows your head, so it is always in view
+	countdown_number = Label3D.new()
+	countdown_number.font_size = 220
+	countdown_number.pixel_size = 0.001
+	countdown_number.outline_size = 36
+	countdown_number.modulate = DashboardUI.ACCENT_2
+	countdown_number.outline_modulate = Color(0.01, 0.06, 0.05, 0.85)
+	countdown_number.no_depth_test = true
+	countdown_number.render_priority = 10
+	countdown_number.outline_render_priority = 9
+	countdown_root.add_child(countdown_number)
+	countdown_text = Label3D.new()
+	countdown_text.font_size = 44
+	countdown_text.pixel_size = 0.001
+	countdown_text.outline_size = 14
+	countdown_text.position = Vector3(0, -0.17, 0)
+	countdown_text.outline_modulate = Color(0.01, 0.06, 0.05, 0.85)
+	countdown_text.no_depth_test = true
+	countdown_text.render_priority = 10
+	countdown_text.outline_render_priority = 9
+	countdown_root.add_child(countdown_text)
+
+
 func _recentre() -> void:
-	if xr_active:
-		_run_tool("recenter")
-		await get_tree().create_timer(0.4).timeout    # let the runtime move the world first
-	else:
-		ui.say("View recentred")
-	_reset_place()
-	_save_place()
+	if countdown_phase == "count":
+		_countdown_cancel()
+		return
+	if countdown_phase != "":
+		return                            # already recentring
+	countdown_phase = "count"
+	countdown_left = COUNTDOWN_SECONDS
+	countdown_text.text = "Stand where you want to be and look straight ahead"
+	countdown_root.visible = true
+	_countdown_show_number(int(ceil(countdown_left)))
+	_set_shown(false)                     # out of the way, so you can see where you are facing
+
+
+func _countdown_show_number(n: int) -> void:
+	countdown_number.text = str(n)
+	if animations:
+		countdown_number.scale = Vector3.ONE * 1.35
+		countdown_number.modulate.a = 0.4
+		var pop := create_tween().set_parallel()
+		pop.tween_property(countdown_number, "scale", Vector3.ONE, 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		pop.tween_property(countdown_number, "modulate:a", 1.0, 0.2)
+
+
+func _countdown_cancel() -> void:
+	countdown_phase = ""
+	countdown_root.visible = false
+	_set_shown(true)
+	ui.say("Recentre cancelled")
+
+
+func _countdown_finish(answer: String) -> void:
+	countdown_phase = "done"
+	countdown_left = 1.4
+	countdown_number.text = "✓" if not answer.begins_with("Can") and not answer.begins_with("The VR") else "!"
+	countdown_text.text = answer
+
+
+func _update_countdown(delta: float) -> void:
+	if countdown_phase == "":
+		return
+	countdown_left -= delta
+	if countdown_phase == "count":
+		var number := int(ceil(countdown_left))
+		if countdown_left <= 0.0:
+			countdown_phase = "wait"
+			countdown_number.text = "…"
+			countdown_text.text = "Recentring"
+			if xr_active:
+				_run_tool("recenter")
+			else:
+				_countdown_finish("View recentred")    # the desktop preview has no game to move
+		elif countdown_number.text != str(number):
+			_countdown_show_number(number)
+	elif countdown_phase == "done" and countdown_left <= 0.0:
+		countdown_phase = ""
+		countdown_root.visible = false
+		_reset_place()                    # in front of you again, in the recentred space
+		_save_place()
+		if not overlay:
+			_set_shown(true)
 
 
 func _save_place() -> void:
@@ -643,6 +767,7 @@ func _grip(pressed: bool) -> void:
 func _process(delta: float) -> void:
 	_poll_game(delta)
 	_collect_tool_jobs()
+	_update_countdown(delta)
 	if not xr_active:
 		return
 	_update_models()
@@ -653,7 +778,10 @@ func _process(delta: float) -> void:
 			var c: XRController3D = hands[side].controller
 			menu = menu or (c.get_has_tracking_data() and c.is_button_pressed(&"menu_button"))
 		if menu and not menu_was_down:
-			_set_shown(not shown)
+			if countdown_phase == "count":
+				_countdown_cancel()
+			elif countdown_phase == "":
+				_set_shown(not shown)
 		menu_was_down = menu
 		if not shown:
 			return
@@ -753,7 +881,8 @@ func _unhandled_input(event: InputEvent) -> void:
 ## GOGGLESXR_PANEL=library       open on a given panel
 ## GOGGLESXR_SHOT=/path/out.png  save a picture of the window after a moment, then quit
 ## GOGGLESXR_TEST_BG=1           fill the background with a loud colour (to stand in for a game)
-## GOGGLESXR_SHOW_MODELS=1       desktop preview: line up every controller model, with lasers
+## GOGGLESXR_SHOW_MODELS=1       desktop preview: line up every controller model (right hands pressed)
+## GOGGLESXR_RECENTRE=1          start the recentre countdown straight away
 ## GOGGLESXR_SELFTEST=1          drive the dashboard through its pointer code, print results, quit
 func _debug_hooks() -> void:
 	var start_panel := OS.get_environment("GOGGLESXR_PANEL")
@@ -763,6 +892,8 @@ func _debug_hooks() -> void:
 		_show_models()
 	if OS.get_environment("GOGGLESXR_TEST_BG") != "":
 		RenderingServer.set_default_clear_color(Color(0.75, 0.1, 0.45))
+	if OS.get_environment("GOGGLESXR_RECENTRE") != "":
+		_recentre.call_deferred()         # after the dashboard's opening animation has started
 	if OS.get_environment("GOGGLESXR_SELFTEST") != "":
 		_selftest.call_deferred()
 	elif OS.get_environment("GOGGLESXR_SHOT") != "":
@@ -774,24 +905,28 @@ func _debug_hooks() -> void:
 
 func _show_models() -> void:
 	screen.visible = false
-	var kinds := ["touch", "touch_plus", "index", "wand", "generic"]
-	for i in kinds.size():
+	# The real models where they are installed (GOGGLESXR_CONTROLLERS points elsewhere for testing),
+	# otherwise the stand-ins
+	var sets := ["oculus-touch", "oculus-touch-v2", "oculus-touch-v3", "meta-quest-touch-plus", "meta-quest-touch-pro",
+			"valve-index", "htc-vive", ControllerModels.GENERIC]
+	var stand_in := {"oculus-touch": "touch", "oculus-touch-v2": "touch", "oculus-touch-v3": "touch", "meta-quest-touch-plus": "touch_plus",
+			"meta-quest-touch-pro": "touch_plus", "valve-index": "index", "htc-vive": "wand", ControllerModels.GENERIC: "generic"}
+	for i in sets.size():
 		for side_index in 2:
-			var model := _make_controller_model(kinds[i], ["left", "right"][side_index])
+			var side: String = ["left", "right"][side_index]
+			var loaded := ControllerModels.load_model(sets[i], side)
+			var model: Node3D = loaded.scene if not loaded.is_empty() else _make_controller_model(stand_in[sets[i]], side)
 			add_child(model)
+			if not loaded.is_empty() and side == "right":
+				# show the pressed look on the right hand: trigger pulled, stick pushed, A pressed
+				ControllerModels.animate(loaded.responses, {"trigger": {"button": 1.0, "x": 0.0, "y": 0.0},
+						"grip": {"button": 1.0, "x": 0.0, "y": 0.0}, "primary": {"button": 0.0, "x": 1.0, "y": 0.0},
+						"ax_button": {"button": 1.0, "x": 0.0, "y": 0.0}})
 			# held as you would hold it: pointing away and a little up
-			model.transform = Transform3D(Basis.from_euler(Vector3(deg_to_rad(25), deg_to_rad(18 - 36 * side_index), 0)),
-					camera.position + Vector3(-0.56 + 0.28 * i + (0.06 if side_index else -0.06), -0.02, -0.55))
-			if kinds[i] == "touch" or kinds[i] == "wand":
-				var beam := MeshInstance3D.new()
-				var box := BoxMesh.new()
-				box.size = Vector3(0.004, 0.004, 1.0)
-				beam.mesh = box
-				beam.material_override = hands["left"].laser.material_override
-				add_child(beam)
-				var aim := (-model.transform.basis.z).normalized()
-				var beam_up := Vector3.UP if absf(aim.dot(Vector3.UP)) < 0.98 else Vector3.FORWARD
-				beam.global_transform = Transform3D(Basis.looking_at(aim, beam_up) * Basis.from_scale(Vector3(1, 1, 0.6)), model.position + aim * 0.36)
+			var column := i % 4
+			var row := i / 4
+			model.transform = Transform3D(Basis.from_euler(Vector3(deg_to_rad(35), deg_to_rad(18 - 36 * side_index), 0)),
+					camera.position + Vector3(-0.42 + 0.28 * column + (0.055 if side_index else -0.055), 0.09 - 0.2 * row, -0.6))
 
 
 func _selftest() -> void:
@@ -936,6 +1071,55 @@ func _selftest() -> void:
 			models_ok = models_ok and built.get_child_count() >= 5 and (built.get_meta("lights") as Dictionary).has("trigger")
 			built.free()
 	check.call("a controller model is built for each kind of controller", models_ok, str(kinds.values()))
+
+	# Real controller models: which set for which headset, and moving parts
+	var picks := {["Meta Quest 3 on WiVRn", "/interaction_profiles/oculus/touch_controller"]: "meta-quest-touch-plus",
+			["Meta Quest 3S on WiVRn", ""]: "meta-quest-touch-plus", ["Oculus Quest 2 on WiVRn", ""]: "oculus-touch-v3",
+			["Oculus Quest on WiVRn", "/interaction_profiles/oculus/touch_controller"]: "oculus-touch-v2",
+			["Meta Quest Pro on WiVRn", ""]: "meta-quest-touch-pro", ["Rift CV1", "/interaction_profiles/oculus/touch_controller"]: "oculus-touch",
+			["SteamVR/Monado", "/interaction_profiles/valve/index_controller"]: "valve-index",
+			["Vive", "/interaction_profiles/htc/vive_controller"]: "htc-vive", ["Steam Frame on WiVRn", "/interaction_profiles/khr/simple_controller"]: ControllerModels.GENERIC,
+			["Unknown", ""]: ""}
+	var picked := []
+	for key in picks:
+		if ControllerModels.pick(key[0], key[1]) != picks[key]:
+			picked.append(key[0] + " -> " + ControllerModels.pick(key[0], key[1]))
+	check.call("the right controller model for each headset", picked.is_empty(), str(picked))
+	check.call("a missing model set is reported, so the stand-in is used", ControllerModels.load_model("no-such-controller", "left").is_empty(), "")
+	if DirAccess.dir_exists_absolute(ControllerModels.models_dir().path_join("meta-quest-touch-plus")):
+		var real := ControllerModels.load_model("meta-quest-touch-plus", "right")
+		var trigger_moves := false
+		if not real.is_empty():
+			var trigger: Array = real.responses.filter(func(r): return r.input == "trigger" and r.kind == "transform")
+			if not trigger.is_empty():
+				var none := {"trigger": {"button": 0.0, "x": 0.0, "y": 0.0}}
+				ControllerModels.animate(real.responses, none)
+				var rest: Transform3D = trigger[0].node.transform
+				ControllerModels.animate(real.responses, {"trigger": {"button": 1.0, "x": 0.0, "y": 0.0}})
+				var pulled: Transform3D = trigger[0].node.transform
+				trigger_moves = rest.is_equal_approx(trigger[0].min) and pulled.is_equal_approx(trigger[0].max) and not rest.is_equal_approx(pulled)
+			real.scene.free()
+		check.call("the Quest 3 model loads and its trigger moves", trigger_moves, "%d moving parts" % (real.get("responses", []).size()))
+	else:
+		print("SKIP real controller models aren't installed in " + ControllerModels.models_dir())
+
+	# Recentre: the dashboard steps aside and counts down before anything moves
+	_set_shown(true)
+	await get_tree().create_timer(0.4).timeout
+	_recentre()
+	check.call("Recentre starts a countdown", countdown_phase == "count" and countdown_root.visible and countdown_number.text == "3", countdown_number.text)
+	await get_tree().create_timer(0.4).timeout
+	check.call("the dashboard steps aside for it", not screen.visible, str(screen.visible))
+	_recentre()
+	check.call("pressing Recentre again cancels it", countdown_phase == "" and not countdown_root.visible, countdown_phase)
+	await get_tree().create_timer(0.4).timeout
+	_recentre()
+	await get_tree().create_timer(1.3).timeout
+	check.call("it counts down", countdown_number.text == "2", countdown_number.text)
+	await get_tree().create_timer(2.0).timeout
+	check.call("then recentres and says so", countdown_phase == "done" and countdown_text.text == "View recentred", countdown_phase + " / " + countdown_text.text)
+	await get_tree().create_timer(1.6).timeout
+	check.call("and the dashboard comes back", countdown_phase == "" and not countdown_root.visible and screen.visible, str(screen.visible))
 
 	# Current Game buttons
 	var signals := []

@@ -382,6 +382,43 @@ if [ -f "$G/gogglesxr/dashboard/project.godot" ]; then
 else
   warn "GogglesXR dashboard sources missing"
 fi
+# The capture layer (gogglesxr/capture-layer): screenshots and recordings of the headset view.
+# gogglesxr copies it into each user's home folder, where Steam's game containers can load it
+if [ -f "$G/gogglesxr/capture-layer/libgogglesxr_capture.so" ]; then
+  install -D -m755 "$G/gogglesxr/capture-layer/libgogglesxr_capture.so" \
+    "/usr/share/$DISTRO_ID/gogglesxr/layer/libgogglesxr_capture.so"
+else
+  warn "GogglesXR capture layer missing"
+fi
+
+log "GogglesXR controller models"
+# The dashboard draws your real controllers (Quest, Rift, Index, Vive...) using the WebXR Input
+# Profiles models (MIT licence). They are data files, too big to keep in the repository, so they
+# are downloaded from a pinned release and checked against third_party/webxr-controller-models.sha256.
+# Files that are already installed and match are kept, so Goggles Update doesn't fetch them again.
+# Without them the dashboard falls back to its own simple controller shapes.
+XR_MODELS=/usr/share/$DISTRO_ID/gogglesxr-controllers
+XR_MODELS_URL="https://cdn.jsdelivr.net/npm/@webxr-input-profiles/assets@1.0.20"
+if [ -f "$G/third_party/webxr-controller-models.sha256" ]; then
+  models_missing=0
+  while read -r sum file; do
+    [ -n "$file" ] || continue
+    case "$file" in *..*|/*) warn "bad controller model path: $file"; continue ;; esac
+    if [ -f "$XR_MODELS/$file" ] && echo "$sum  $XR_MODELS/$file" | sha256sum -c --status; then
+      continue
+    fi
+    url="$XR_MODELS_URL/dist/profiles/$file"
+    [ "$file" = LICENSE.md ] && url="$XR_MODELS_URL/LICENSE.md"
+    tmp=$(mktemp)
+    if wget -q -T 60 -t 3 -O "$tmp" "$url" && echo "$sum  $tmp" | sha256sum -c --status; then
+      install -D -m644 "$tmp" "$XR_MODELS/$file"
+    else
+      models_missing=$((models_missing + 1))
+    fi
+    rm -f "$tmp"
+  done < "$G/third_party/webxr-controller-models.sha256"
+  [ "$models_missing" -eq 0 ] || warn "$models_missing controller model file(s) couldn't be downloaded; the dashboard uses simple shapes for those controllers"
+fi
 
 log "Desktop widget: Goggles HUD"
 # CPU / RAM / GPU / network readouts (chroot/hud-plasmoid). Shown with goggles-hud or Add Widgets

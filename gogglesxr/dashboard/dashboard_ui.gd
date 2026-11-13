@@ -420,7 +420,7 @@ func _build_quick(body: Control) -> void:
 		grid.add_child(_soon(toggle))
 	var recentre := _button("Recentre")
 	recentre.theme_type_variation = &"Toggle"
-	recentre.pressed.connect(func(): recentre_requested.emit(); say("View recentred"))
+	recentre.pressed.connect(func(): recentre_requested.emit())
 	grid.add_child(recentre)
 
 
