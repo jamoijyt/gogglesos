@@ -851,7 +851,10 @@ def main(argv):
     app.setDesktopFileName("gogglesxr")
     app.setStyleSheet(STYLE)
     app.setQuitOnLastWindowClosed(False)
-    window = Window(load_tool())
+    tool = load_tool()
+    if tool.is_on():
+        tool.ensure_layer()           # screenshots and recordings of the headset view (games started from now on)
+    window = Window(tool)
 
     window.tray = None
     if QSystemTrayIcon.isSystemTrayAvailable():
