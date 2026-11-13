@@ -56,6 +56,7 @@ APT_PACKAGES=(
   ffmpeg                                        # GogglesXR recordings of the headset view
   fastfetch                                     # system info with the Goggles logo (/etc/xdg/fastfetch)
   systemd-zram-generator earlyoom              # compressed swap, and close the game instead of freezing when RAM runs out
+  zstd                                          # unpacks Goggles Link
 )
 
 # Flatpaks (installed system-wide from Flathub at build time; failures are non-fatal)

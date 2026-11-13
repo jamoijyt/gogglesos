@@ -629,12 +629,13 @@ class Window(QMainWindow):
         widget, group, inner_box = self.scroll_page("VR settings", "Headset and dashboard")
 
         # The streaming engine: today WiVRn; Goggles Link (GogglesXR's own) when it is ready
-        f = group("Streaming engine", "What streams the game to the headset. GogglesXR's own link software will "
-                                      "appear here when it is ready.")
-        combo = self.choice(f, "Engine", [(cls.id, cls.name + ("" if cls.available else " (coming later)"))
+        f = group("Streaming engine", "What streams the game to the headset. Each engine has its own app on the headset: "
+                                      "Goggles Link for Goggles Link, WiVRn for WiVRn. After changing it, quit "
+                                      "Steam completely and open it again.")
+        combo = self.choice(f, "Engine", [(cls.id, cls.name + ("" if cls().installed() else " (not installed)"))
                                           for cls in engines.ENGINES.values()], self.engine.id, self.change_engine)
         for index, cls in enumerate(engines.ENGINES.values()):
-            if not cls.available:               # listed, but can't be chosen yet
+            if not cls().installed():           # listed, but can't be chosen
                 combo.model().item(index).setEnabled(False)
         self.engine_note = label(self.engine.description, "muted", True)
         self.engine_note.setContentsMargins(178, 0, 0, 6)
@@ -902,10 +903,23 @@ class Window(QMainWindow):
 
     def change_engine(self, engine_id):
         cls = engines.ENGINES.get(engine_id)
-        if cls is None or not cls.available:
+        if cls is None or not cls().installed() or engine_id == self.engine.id:
             return
+        old = self.engine
         self.change("engine", engine_id)
         self.engine = engines.current()
+        self.engine_note.setText(self.engine.description)
+        self.headset = {}
+
+        def switched(_):
+            # games must now find the new engine: its translator and its folder in Steam's containers
+            if self.tool.is_on():
+                self.tool.turn_on()
+            if self.server is not None and self.server.state() != QProcess.ProcessState.NotRunning:
+                self.server.terminate()
+            self.refresh_known()
+            self.tick()
+        self.run_bg(old.quit, switched)
 
     def choose_environment(self):
         path, _ = QFileDialog.getOpenFileName(self, "Choose a 360° picture", os.path.expanduser("~/Pictures"),
@@ -943,7 +957,8 @@ class Window(QMainWindow):
         if self.settings["keep_ready"] and not broken and not connected and not self.tool.running("wivrn-server"):
             if self.server is None or self.server.state() == QProcess.ProcessState.NotRunning:
                 self.server = QProcess(self)
-                self.server.start("flatpak", ["run", "--command=wivrn-server", self.tool.ENGINE_APP])
+                command = self.engine.server_command()
+                self.server.start(command[0], command[1:])
         running = self.dashboard is not None and self.dashboard.state() != QProcess.ProcessState.NotRunning
         if connected and self.settings["auto_dashboard"] and not broken and not running:
             if self.dashboard_retry <= 0:

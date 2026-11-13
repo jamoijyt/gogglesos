@@ -1,14 +1,13 @@
 """GogglesXR's streaming engines, behind one interface.
 
 The dashboard, the desktop app and the gogglesxr command never talk to the streaming software
-directly: they ask the current engine. GogglesXR v0 streams through WiVRn (the WiVRn class
-below). When GogglesXR's own link software ("Goggles Link") is ready, it becomes a second
-class with the same methods, and nothing else needs to change. Everything an engine reports
+directly: they ask the current engine. There are two: WiVRn, and GogglesXR's own link software,
+Goggles Link, which is a fork of WiVRn and so shares most of WiVRn's class. Everything an engine reports
 uses GogglesXR's own words and units (see Engine.headset), not the engine's.
 
 Engines:
   wivrn        WiVRn (Monado-based), installed as the io.github.wivrn.wivrn Flatpak
-  goggleslink  Goggles Link: GogglesXR's own streaming, not available yet
+  goggleslink  Goggles Link: GogglesXR's own streaming (a fork of WiVRn), installed in /opt/goggles-link
 """
 import json
 import os
@@ -202,12 +201,39 @@ class Engine:
     id = ""
     name = ""
     description = ""
-    available = True                      # False: listed, but can't be chosen yet
 
     def installed(self):
         return False
 
     def running(self):
+        return False
+
+    # ---- where it is installed, for setting up games (gogglesxr on)
+    def root(self):
+        """The folder Steam's game containers must be able to see, or None if not installed."""
+        return None
+
+    def translator(self):
+        """The folder of the OpenVR translator (xrizer) that runs SteamVR games, or None."""
+        return None
+
+    def container_paths(self):
+        """Paths to share with Steam's game containers (PRESSURE_VESSEL_FILESYSTEMS_RW)."""
+        return [self.root()] if self.root() else []
+
+    def server_command(self):
+        """The command that starts the streaming server in the background."""
+        return []
+
+    def window_command(self):
+        """The command that opens the engine's own window, if it has one (else the server)."""
+        return self.server_command()
+
+    def install_hint(self):
+        return ""
+
+    def quit(self):
+        """Stop the running server (used when switching engines)."""
         return False
 
     def headset(self):
@@ -263,9 +289,32 @@ class WiVRn(Engine):
                 ("vulkan", "Vulkan Video"), ("x264", "Processor (x264, slow)")]
     CODECS = [("auto", "Automatic"), ("h264", "H.264"), ("h265", "H.265 (HEVC)"), ("av1", "AV1")]
 
+    def root(self):
+        for base in ("/var/lib/flatpak", os.path.join(HOME, ".local/share/flatpak")):
+            d = os.path.join(base, "app", self.APP)        # stable across the Flatpak's updates
+            if os.path.isdir(os.path.join(d, "current", "active", "files")):
+                return d
+        return None
+
     def installed(self):
-        return any(os.path.isdir(os.path.join(root, "app", self.APP)) for root in
-                   ("/var/lib/flatpak", os.path.join(HOME, ".local/share/flatpak")))
+        return self.root() is not None
+
+    def translator(self):
+        d = self.root()
+        x = os.path.join(d, "current", "active", "files", "xrizer") if d else None
+        return x if x and os.path.isdir(x) else None
+
+    def server_command(self):
+        return ["flatpak", "run", "--command=wivrn-server", self.APP]
+
+    def window_command(self):
+        return ["flatpak", "run", self.APP]
+
+    def install_hint(self):
+        return "Install it: flatpak install flathub " + self.APP
+
+    def quit(self):
+        return busctl("call", self.BUS, self.PATH, self.BUS, "Quit") is not None
 
     def _props(self):
         reply = busctl("call", self.BUS, self.PATH, "org.freedesktop.DBus.Properties", "GetAll", "s", self.BUS)
@@ -429,23 +478,65 @@ class WiVRn(Engine):
         return run_monado("recenter", self.APP)
 
 
-class GogglesLink(Engine):
-    """GogglesXR's own link software. Listed so the settings can show it; not available yet."""
+class GogglesLink(WiVRn):
+    """Goggles Link: GogglesXR's own link software (github.com/jamoijyt/goggles-link), a fork of
+    WiVRn built for Goggles OS and installed without a Flatpak in /opt/goggles-link. Its headset
+    app is "Goggles Link". Inside, the server keeps WiVRn's names for now (the wivrn-server
+    program, its D-Bus name and its ~/.config/wivrn folder), so everything WiVRn's class does
+    over D-Bus works unchanged; only where it lives and how it starts differ."""
     id = "goggleslink"
     name = "Goggles Link"
-    description = "GogglesXR's own streaming, built for Goggles OS. Coming in a later version."
-    available = False
+    description = "GogglesXR's own streaming, built for Goggles OS. Uses the Goggles Link app on the headset."
+    APP = None                             # not a Flatpak
+    ROOT = os.environ.get("GOGGLES_LINK_ROOT") or "/opt/goggles-link"
+    APK = "/usr/share/gogglesos/goggles-link.apk"
+
+    def root(self):
+        return self.ROOT if os.access(os.path.join(self.ROOT, "bin", "wivrn-server"), os.X_OK) else None
+
+    def translator(self):
+        x = os.path.join(self.ROOT, "xrizer")
+        return x if os.path.isdir(x) else None
+
+    def container_paths(self):
+        # Not in a Flatpak, so the games' containers also need the runtime's socket
+        return [os.path.join(RUNTIME_DIR, "wivrn", "comp_ipc"), self.ROOT] if self.root() else []
+
+    def server_command(self):
+        return [os.path.join(self.ROOT, "bin", "wivrn-server")]
+
+    def window_command(self):
+        return self.server_command()       # no window of its own: the GogglesXR app is its window
+
+    def install_hint(self):
+        return "Goggles Link isn't installed. Update Goggles OS (Goggles Update)."
+
+    def version(self):
+        try:
+            with open(os.path.join(self.ROOT, "VERSION"), encoding="utf-8") as f:
+                return f.read().strip()
+        except OSError:
+            return ""
+
+    def _config_path(self):
+        return os.path.join(CONFIG, "wivrn", "config.json")
 
 
 ENGINES = {cls.id: cls for cls in (WiVRn, GogglesLink)}
 
 
 def current():
-    """The engine chosen in the settings ("engine"), or WiVRn while nothing else is available."""
+    """The engine chosen in the settings ("engine"). If that one isn't installed but another is,
+    the installed one is used, so a missing engine never leaves VR without a runtime."""
     if os.environ.get("GOGGLESXR_FAKE_HEADSET"):
         return Fake()
-    wanted = ENGINES.get(str(read_settings().get("engine", "wivrn")), WiVRn)
-    return wanted() if wanted.available else WiVRn()
+    wanted = ENGINES.get(str(read_settings().get("engine", "wivrn")), WiVRn)()
+    if wanted.installed():
+        return wanted
+    for cls in ENGINES.values():
+        if cls().installed():
+            return cls()
+    return wanted
 
 
 class Fake(WiVRn):

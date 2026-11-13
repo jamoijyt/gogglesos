@@ -169,7 +169,7 @@ overlay/                      files installed into the system (/etc, /usr)
   usr/share/gogglesos/gogglesxr/   GogglesXR desktop app (app.py), game library (library.py) and streaming engines (engine.py)
   usr/bin/goggles-update      Goggles Update (plus its daily check in usr/lib/systemd/user/)
   usr/libexec/gogglesos/      lock-screen patch + re-apply hook run after package updates
-third_party/                  pinned, checksum-verified copies of upstream tools, and the controller-model checksums (see its README)
+third_party/                  pinned, checksum-verified copies of upstream tools, and the checksums of downloaded parts (controller models, Goggles Link)
 test-iso.sh                   QEMU boot test with screenshots (headless, window or browser view)
 vmware-test-vm.ps1            VMware test VM
 hyperv-*.ps1                  Hyper-V test VM and helpers

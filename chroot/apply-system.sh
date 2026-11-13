@@ -400,6 +400,51 @@ else
   warn "GogglesXR capture layer missing"
 fi
 
+log "Goggles Link"
+# GogglesXR's own link software (github.com/jamoijyt/goggles-link, a fork of WiVRn): the PC side
+# goes to /opt/goggles-link and the headset app to /usr/share/$DISTRO_ID/goggles-link.apk. Both
+# come from a release of that repository, pinned by checksum in third_party/goggles-link.sha256
+# (the file names carry the version). Skipped when that version is already installed.
+GL_ROOT=/opt/goggles-link
+GL_URL="https://github.com/jamoijyt/goggles-link/releases/download"
+if [ -f "$G/third_party/goggles-link.sha256" ]; then
+  gl_server=$(awk '/goggles-link-server-.*\.tar\.zst$/{print $2}' "$G/third_party/goggles-link.sha256")
+  gl_apk=$(awk '/goggles-link-[0-9].*\.apk$/{print $2}' "$G/third_party/goggles-link.sha256")
+  gl_version=${gl_server#goggles-link-server-}; gl_version=${gl_version%-x86_64.tar.zst}
+  if [ -z "$gl_server" ] || [ -z "$gl_apk" ]; then
+    warn "third_party/goggles-link.sha256 doesn't name a server archive and an APK"
+  elif [ "$(cat "$GL_ROOT/VERSION" 2>/dev/null)" = "$gl_version" ] && [ -f "/usr/share/$DISTRO_ID/goggles-link.apk" ] \
+      && [ "$(cat "/usr/share/$DISTRO_ID/goggles-link.version" 2>/dev/null)" = "$gl_version" ]; then
+    : # already installed
+  else
+    gl_tmp=$(mktemp -d)
+    if (cd "$gl_tmp" && wget -q -T 120 -t 3 "$GL_URL/gl-$gl_version/$gl_server" "$GL_URL/gl-$gl_version/$gl_apk" \
+        && sha256sum -c --status "$G/third_party/goggles-link.sha256"); then
+      rm -rf "${GL_ROOT:?}.new"; mkdir -p "$GL_ROOT.new"
+      if tar --zstd -xf "$gl_tmp/$gl_server" -C "$GL_ROOT.new" --no-same-owner; then
+        chown -R root:root "$GL_ROOT.new"; chmod -R go-w "$GL_ROOT.new"
+        rm -rf "${GL_ROOT:?}"; mv "$GL_ROOT.new" "$GL_ROOT"
+        install -D -m644 "$gl_tmp/$gl_apk" "/usr/share/$DISTRO_ID/goggles-link.apk"
+        echo "$gl_version" > "/usr/share/$DISTRO_ID/goggles-link.version"
+        # The Ubuntu libraries it was built against (listed by its build)
+        if [ -s "$GL_ROOT/DEPENDS" ]; then
+          gl_missing=$(while read -r pkg; do dpkg -s "$pkg" >/dev/null 2>&1 || echo "$pkg"; done < "$GL_ROOT/DEPENDS")
+          if [ -n "$gl_missing" ]; then
+            # shellcheck disable=SC2086
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $gl_missing \
+              || warn "some libraries Goggles Link needs couldn't be installed: $gl_missing"
+          fi
+        fi
+      else
+        rm -rf "${GL_ROOT:?}.new"; warn "the Goggles Link archive couldn't be unpacked"
+      fi
+    else
+      warn "Goggles Link $gl_version couldn't be downloaded or didn't match its checksum; GogglesXR keeps using WiVRn"
+    fi
+    rm -rf "$gl_tmp"
+  fi
+fi
+
 log "GogglesXR controller models"
 # The dashboard draws your real controllers (Quest, Rift, Index, Vive...) using the WebXR Input
 # Profiles models (MIT licence). They are data files, too big to keep in the repository, so they
