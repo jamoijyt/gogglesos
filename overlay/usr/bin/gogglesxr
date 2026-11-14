@@ -26,6 +26,7 @@ does the setup that otherwise has to be done by hand:
   gogglesxr headset   the connected headset: batteries, ping, stream (--json)
   gogglesxr pair      let a new headset pair with this PC (shows a PIN; --stop to end)
   gogglesxr server    start, stop or check the streaming server (start|stop|status)
+  gogglesxr install-headset  install the Goggles Link app on the headset plugged in by USB
   gogglesxr app       open the GogglesXR desktop app (--background: tray icon only)
   gogglesxr           open the desktop app (menu entry)
 """
@@ -1023,6 +1024,16 @@ def server_command(args):
     return 2
 
 
+def install_headset_command(args):
+    """Install the Goggles Link app on the headset plugged in by USB."""
+    sys.path.insert(0, APP_DIR) if APP_DIR not in sys.path else None
+    import engine
+    link = engine.GogglesLink()
+    ok, message = link.install_on_headset(print)
+    print(message)
+    return 0 if ok else 1
+
+
 def pair_command(args):
     """Let a new headset pair with this PC: prints the PIN to type in the headset."""
     engine = load_engine()
@@ -1078,7 +1089,8 @@ def main():
                "app": lambda: app(sys.argv[2:]), "screenshot": screenshot, "record": record,
                "quit-game": quit_game, "recenter": recenter, "recentre": recenter,
                "headset": lambda: headset_command(sys.argv[2:]), "pair": lambda: pair_command(sys.argv[2:]),
-               "server": lambda: server_command(sys.argv[2:])}
+               "server": lambda: server_command(sys.argv[2:]),
+               "install-headset": lambda: install_headset_command(sys.argv[2:])}
     if cmd not in actions:
         print(__doc__.strip(), file=sys.stderr)
         return 2

@@ -478,6 +478,15 @@ class Window(QMainWindow):
         self.home_pair_button.clicked.connect(self.pair)
         head.addWidget(self.home_pair_button, 0, Qt.AlignmentFlag.AlignVCenter)
         link_box.addLayout(head)
+        install_row = QHBoxLayout()
+        self.install_note = label("", "muted", True)
+        install_row.addWidget(self.install_note, 1)
+        self.install_button = QPushButton("Install on headset")
+        self.install_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.install_button.setToolTip("Installs or updates the Goggles Link app on a headset plugged in with a USB cable")
+        self.install_button.clicked.connect(self.install_headset)
+        install_row.addWidget(self.install_button, 0, Qt.AlignmentFlag.AlignTop)
+        link_box.addLayout(install_row)
         self.home_pin = label("", "pin")
         self.home_pin.hide()
         link_box.addWidget(self.home_pin)
@@ -942,6 +951,27 @@ class Window(QMainWindow):
             self.poll_headset(True)
         self.run_bg(work, got)
 
+    def install_headset(self):
+        """Install or update the Goggles Link app on the headset plugged in by USB."""
+        link = engines.ENGINES["goggleslink"]()
+        self.install_button.setEnabled(False)
+        self.install_note.setText("Starting…")
+        steps = queue.Queue()
+
+        def show_steps():
+            while not steps.empty():
+                self.install_note.setText(steps.get())
+        ticker = QTimer(self)
+        ticker.timeout.connect(show_steps)
+        ticker.start(150)
+
+        def done(result):
+            ticker.stop()
+            ok, message = result if isinstance(result, tuple) else (False, str(result))
+            self.install_note.setText(("✓ " if ok else "") + message)
+            self.install_button.setEnabled(True)
+        self.run_bg(lambda: link.install_on_headset(steps.put), done)
+
     def show_pin_text(self, pin, note):
         self.home_pin.setText(pin)
         self.home_pin.setVisible(bool(pin))
@@ -1016,6 +1046,11 @@ class Window(QMainWindow):
             self.server_button.setText("Stop server" if running else "Start server")
         self.server_dot.setStyleSheet(f"color: {ACCENT if running else MUTED}; font-size: 16px;")
         self.server_button.setEnabled(not self.server_busy and bool(engine.root()))
+        link = engines.ENGINES["goggleslink"]()
+        self.install_button.setVisible(link.installed())
+        if link.installed() and not self.install_note.text():
+            self.install_note.setText(f"Headset app: Goggles Link {link.apk_version()}. Plug the headset in with a USB "
+                                      "cable to install or update it.")
         entry = getattr(self, "tray_server", None)
         if entry is not None:
             entry.setText("Stop streaming server" if running else "Start streaming server")
