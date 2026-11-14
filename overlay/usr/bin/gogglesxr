@@ -25,6 +25,7 @@ does the setup that otherwise has to be done by hand:
   gogglesxr quit-game close the VR game that is running
   gogglesxr headset   the connected headset: batteries, ping, stream (--json)
   gogglesxr pair      let a new headset pair with this PC (shows a PIN; --stop to end)
+  gogglesxr server    start, stop or check the streaming server (start|stop|status)
   gogglesxr app       open the GogglesXR desktop app (--background: tray icon only)
   gogglesxr           open the desktop app (menu entry)
 """
@@ -994,6 +995,34 @@ def headset_command(args):
     return 0
 
 
+def server_command(args):
+    """gogglesxr server [start|stop|status]: the streaming server, on its own."""
+    engine = load_engine()
+    action = args[0] if args else "status"
+    if action == "status":
+        running = engine.running()
+        print(f"{engine.name} server: " + ("running" if running else "stopped"))
+        return 0 if running else 1
+    if action == "stop":
+        ok = engine.stop_server()
+        print(f"{engine.name} server stopped" if ok else f"Couldn't stop the {engine.name} server")
+        return 0 if ok else 1
+    if action == "start":
+        if engine.running():
+            print(f"{engine.name} server is already running")
+            return 0
+        if not engine.root():
+            print(engine.install_hint())
+            return 1
+        subprocess.Popen(engine.server_command(), start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        ok = engine.wait_running(15)
+        print(f"{engine.name} server started" if ok else f"The {engine.name} server didn't start")
+        return 0 if ok else 1
+    print("Usage: gogglesxr server [start|stop|status]", file=sys.stderr)
+    return 2
+
+
 def pair_command(args):
     """Let a new headset pair with this PC: prints the PIN to type in the headset."""
     engine = load_engine()
@@ -1001,6 +1030,8 @@ def pair_command(args):
         engine.disable_pairing()
         print("Pairing stopped")
         return 0
+    if not engine.running():                # pairing needs the server: start it first
+        server_command(["start"])
     pin = engine.enable_pairing(120)
     if not pin:
         print(f"Couldn't start pairing: is the streaming engine ({engine.name}) running? Start it with: gogglesxr start")
@@ -1046,7 +1077,8 @@ def main():
                "dashboard": lambda: dashboard(sys.argv[2:]), "library": lambda: library_command(sys.argv[2:]),
                "app": lambda: app(sys.argv[2:]), "screenshot": screenshot, "record": record,
                "quit-game": quit_game, "recenter": recenter, "recentre": recenter,
-               "headset": lambda: headset_command(sys.argv[2:]), "pair": lambda: pair_command(sys.argv[2:])}
+               "headset": lambda: headset_command(sys.argv[2:]), "pair": lambda: pair_command(sys.argv[2:]),
+               "server": lambda: server_command(sys.argv[2:])}
     if cmd not in actions:
         print(__doc__.strip(), file=sys.stderr)
         return 2

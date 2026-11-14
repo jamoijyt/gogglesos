@@ -72,6 +72,7 @@ QMainWindow, #root {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0
 #card {{ background: rgba(12, 38, 33, 0.74); border: 1px solid rgba(61, 220, 132, 0.26); border-radius: 18px; }}
 #visor {{ background: {ACCENT}; border-radius: 1px; max-height: 2px; min-height: 2px; }}
 #headline {{ font-size: 22px; font-weight: 600; }}
+#pin {{ font-size: 40px; font-weight: 700; letter-spacing: 8px; color: {ACCENT_2}; padding: 4px 0; }}
 #row {{ border-bottom: 1px solid rgba(255, 255, 255, 0.07); padding: 9px 2px; }}
 QPushButton {{ background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 10px; padding: 9px 16px; font-weight: 600; }}
 QPushButton:hover {{ border-color: {ACCENT}; background: rgba(61, 220, 132, 0.12); }}
@@ -331,6 +332,10 @@ class Window(QMainWindow):
         self.headset_polling = False
         self.headset_due = 0.0
         self.pairing_until = 0.0
+        self.pairing_busy = False
+        self.server_paused = False         # stopped on purpose: don't restart it until Start is pressed
+        self.server_busy = False
+        self.pin_labels = []
         self.jobs = queue.Queue()          # (callback, result) from work done on other threads
         self.job_timer = QTimer(self)
         self.job_timer.timeout.connect(self.collect_jobs)
@@ -450,6 +455,38 @@ class Window(QMainWindow):
         buttons.addStretch(1)
         hero_box.addLayout(buttons)
         box.addWidget(hero)
+
+        # Streaming server: on/off, and the PIN a new headset needs
+        link, link_box = card()
+        head = QHBoxLayout()
+        self.server_dot = label("●")
+        head.addWidget(self.server_dot)
+        words = QVBoxLayout()
+        words.setSpacing(2)
+        self.server_title = label("STREAMING SERVER", "eyebrow")
+        self.server_state = label("", "headline")
+        words.addWidget(self.server_title)
+        words.addWidget(self.server_state)
+        head.addLayout(words, 1)
+        self.server_button = QPushButton("Stop server")
+        self.server_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.server_button.clicked.connect(self.toggle_server)
+        head.addWidget(self.server_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.home_pair_button = QPushButton("Pair a headset")
+        self.home_pair_button.setObjectName("primary")
+        self.home_pair_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.home_pair_button.clicked.connect(self.pair)
+        head.addWidget(self.home_pair_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        link_box.addLayout(head)
+        self.home_pin = label("", "pin")
+        self.home_pin.hide()
+        link_box.addWidget(self.home_pin)
+        self.home_pin_note = label("", "muted", True)
+        self.home_pin_note.hide()
+        link_box.addWidget(self.home_pin_note)
+        box.addWidget(link)
+        self.pin_countdown = QTimer(self)
+        self.pin_countdown.timeout.connect(self.show_pin_time)
 
         # Quick launch: the VR game played most recently
         quick, quick_box = card()
@@ -664,6 +701,7 @@ class Window(QMainWindow):
         self.pin_label = label("", "headline", True)
         self.pin_label.hide()
         f.addWidget(self.pin_label)
+        self.pin_labels = [self.pin_label]
         self.known_box = QVBoxLayout()
         self.known_box.setSpacing(0)
         f.addLayout(self.known_box)
@@ -776,7 +814,7 @@ class Window(QMainWindow):
             self.lenses.set_state("connected", animated)
         else:
             self.headline.setText("Ready for a headset")
-            self.subline.setText("Put the headset on and open the GogglesXR streaming app in it. This PC will show up there.")
+            self.subline.setText(f"Put the headset on and open the {self.engine.name} app in it. This PC will show up there.")
             self.lenses.set_state("waiting", animated)
         self.setup_button.setVisible(bool(failed))
         self.dashboard_button.setEnabled(not failed)
@@ -816,6 +854,7 @@ class Window(QMainWindow):
             line.setTextFormat(Qt.TextFormat.RichText)
             self.check_rows.addWidget(line)
         self.side_note.setText("Headset connected" if connected else "Waiting for a headset")
+        self.show_server()
         self.background(connected, bool(failed))
 
     # -------------------------------------------------------------- engine (on other threads)
@@ -853,11 +892,7 @@ class Window(QMainWindow):
                 if changed:
                     self.tick()
                 if self.pairing_until and (time.monotonic() > self.pairing_until or not info.get("pairing", {}).get("enabled")):
-                    self.pairing_until = 0.0
-                    self.pin_label.setText("")
-                    self.pin_label.hide()
-                    self.pair_button.setEnabled(True)
-                    self.refresh_known()
+                    self.end_pairing(paired=info.get("connected", False))
         self.run_bg(self.engine.headset, got)
 
     def set_stream_option(self, key, value):
@@ -865,19 +900,125 @@ class Window(QMainWindow):
         self.run_bg(lambda: self.engine.set_stream_option(key, value),
                     lambda result: self.stream_note.setText(result[1] if isinstance(result, tuple) else str(result)))
 
+    # -------------------------------------------------------------- pairing and the server
     def pair(self):
-        self.pair_button.setEnabled(False)
-        self.pin_label.setText("Starting pairing…")
-        self.pin_label.show()
+        """Let a new headset pair: start the server if needed, then show its PIN on Home and in
+        VR settings for as long as pairing stays open (2 minutes)."""
+        if self.pairing_busy:
+            return
+        self.pairing_busy = True
+        self.server_paused = False
+        for b in (self.pair_button, self.home_pair_button):
+            b.setEnabled(False)
+        self.show_pin_text("Starting pairing…", "")
+        engine = self.engine
+        started = None
+        if not engine.running():
+            started = QProcess(self)
+            command = engine.server_command()
+            if command:
+                started.start(command[0], command[1:])
+            if self.server is None or self.server.state() == QProcess.ProcessState.NotRunning:
+                self.server = started
+
+        def work():
+            if not engine.wait_running(20):
+                return ""
+            return engine.enable_pairing(120)
 
         def got(pin):
+            self.pairing_busy = False
             if isinstance(pin, str) and pin:
                 self.pairing_until = time.monotonic() + 120
-                self.pin_label.setText(f"Type this PIN in the headset:  {pin}")
+                spaced = pin if len(pin) != 6 else pin[:3] + " " + pin[3:]
+                self.show_pin_text(spaced, f"Type this PIN in the {engine.name} app on the headset when it asks.")
+                self.show_pin_time()
+                self.pin_countdown.start(1000)
             else:
-                self.pin_label.setText("Couldn't start pairing: is the VR runtime running? Press Connect a headset on Home first.")
-                self.pair_button.setEnabled(True)
-        self.run_bg(lambda: self.engine.enable_pairing(120), got)
+                self.show_pin_text("", f"Couldn't start pairing: the {engine.name} server didn't answer. "
+                                       "Check that GogglesXR is set up (Home > Checks), then try again.")
+                for b in (self.pair_button, self.home_pair_button):
+                    b.setEnabled(True)
+            self.poll_headset(True)
+        self.run_bg(work, got)
+
+    def show_pin_text(self, pin, note):
+        self.home_pin.setText(pin)
+        self.home_pin.setVisible(bool(pin))
+        self.home_pin_note.setText(note)
+        self.home_pin_note.setVisible(bool(note))
+        for l in self.pin_labels:
+            l.setText(f"PIN: {pin}" if pin and pin[0].isdigit() else (pin or note))
+            l.setVisible(bool(pin or note))
+
+    def show_pin_time(self):
+        left = int(self.pairing_until - time.monotonic())
+        if left <= 0:
+            self.end_pairing()
+            return
+        note = self.home_pin_note.text().split("  ·  ")[0]
+        self.home_pin_note.setText(f"{note}  ·  open for {left // 60}:{left % 60:02d}")
+
+    def end_pairing(self, paired=False):
+        self.pairing_until = 0.0
+        self.pin_countdown.stop()
+        self.show_pin_text("", "Paired: the headset can now connect whenever it likes." if paired else "")
+        for b in (self.pair_button, self.home_pair_button):
+            b.setEnabled(True)
+        self.refresh_known()
+
+    def server_running(self):
+        return bool(self.headset.get("running")) or bool(self.tool.running("wivrn-server"))
+
+    def toggle_server(self):
+        if self.server_busy:
+            return
+        self.server_busy = True
+        self.server_button.setEnabled(False)
+        if self.server_running():
+            self.server_paused = True            # keep it off until Start is pressed
+            self.server_state.setText("Stopping…")
+            if self.server is not None and self.server.state() != QProcess.ProcessState.NotRunning:
+                self.server.terminate()
+            work = self.engine.stop_server
+        else:
+            self.server_paused = False
+            self.server_state.setText("Starting…")
+            if self.server is None or self.server.state() == QProcess.ProcessState.NotRunning:
+                self.server = QProcess(self)
+                command = self.engine.server_command()
+                self.server.start(command[0], command[1:])
+            work = lambda: self.engine.wait_running(20)
+
+        def done(_):
+            self.server_busy = False
+            self.server_button.setEnabled(True)
+            self.headset = {}
+            self.poll_headset(True)
+        self.run_bg(work, done)
+
+    def show_server(self):
+        """The streaming server card on Home, and the tray menu entry."""
+        engine = self.engine
+        running = self.server_running()
+        version = engine.version() if hasattr(engine, "version") else ""
+        name = f"{engine.name} {version}".strip()
+        if not self.server_busy:
+            if running:
+                state = f"{name} is running"
+                if self.headset.get("connected"):
+                    state += " · headset connected"
+            elif self.server_paused:
+                state = f"{name} is stopped (stays off until you start it)"
+            else:
+                state = f"{name} is stopped"
+            self.server_state.setText(state)
+            self.server_button.setText("Stop server" if running else "Start server")
+        self.server_dot.setStyleSheet(f"color: {ACCENT if running else MUTED}; font-size: 16px;")
+        self.server_button.setEnabled(not self.server_busy and bool(engine.root()))
+        entry = getattr(self, "tray_server", None)
+        if entry is not None:
+            entry.setText("Stop streaming server" if running else "Start streaming server")
 
     def refresh_known(self):
         def got(known):
@@ -954,7 +1095,8 @@ class Window(QMainWindow):
         """Keep the runtime up, and the dashboard open in the headset, as the settings ask."""
         if os.environ.get("GOGGLESXR_APP_NO_BACKGROUND"):
             return
-        if self.settings["keep_ready"] and not broken and not connected and not self.tool.running("wivrn-server"):
+        if (self.settings["keep_ready"] and not self.server_paused and not broken and not connected
+                and not self.tool.running("wivrn-server")):
             if self.server is None or self.server.state() == QProcess.ProcessState.NotRunning:
                 self.server = QProcess(self)
                 command = self.engine.server_command()
@@ -1084,11 +1226,18 @@ def main(argv):
         tray = QSystemTrayIcon(QIcon(logo_pixmap(64)), app)
         tray.setToolTip("GogglesXR")
         menu = QMenu()
+        def pair_from_tray():
+            window.show_page(0)
+            window.showNormal()
+            window.pair()
         for text, action in (("Open GogglesXR", window.showNormal), ("Open dashboard", lambda: window.start_dashboard(True)),
+                             ("Pair a headset", pair_from_tray), ("Stop streaming server", window.toggle_server),
                              ("Quit", window.quit)):
             entry = QAction(text, menu)
             entry.triggered.connect(action)
             menu.addAction(entry)
+            if action == window.toggle_server:
+                window.tray_server = entry
         tray.setContextMenu(menu)
         tray.activated.connect(lambda reason: window.showNormal() if reason == QSystemTrayIcon.ActivationReason.Trigger else None)
         tray.show()
