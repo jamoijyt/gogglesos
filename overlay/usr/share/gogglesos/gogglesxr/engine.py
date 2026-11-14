@@ -172,6 +172,19 @@ def parse_ss(out):
     return best
 
 
+def _adb_run(*args, timeout=30):
+    try:
+        return subprocess.run(["adb", *args], capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as e:
+        return subprocess.CompletedProcess(args, 1, "", str(e))
+
+
+def _adb(*args, timeout=15):
+    """adb's output, or None if it failed (or adb isn't installed)."""
+    result = _adb_run(*args, timeout=timeout)
+    return result.stdout if result.returncode == 0 else None
+
+
 def busctl(*args, timeout=3):
     """Run busctl on the user's session bus with JSON output; returns the parsed answer or None."""
     if not shutil.which("busctl"):
@@ -567,6 +580,88 @@ class GogglesLink(WiVRn):
 
     def _config_path(self):
         return os.path.join(CONFIG, "wivrn", "config.json")
+
+    # ---- the headset app (installed over a USB cable with adb)
+    PACKAGE = "org.gogglesos.link"
+    ACTIVITY = "org.meumeu.wivrn.MainActivity"
+
+    def apk_version(self):
+        """The version of the headset app that came with this Goggles OS, or ""."""
+        try:
+            with open(os.path.splitext(self.APK)[0] + ".version", encoding="utf-8") as f:
+                return f.read().strip()
+        except OSError:
+            return self.version()
+
+    def usb_headsets(self):
+        """Headsets plugged in by USB: [{"serial", "state", "model"}]. state is "device" when
+        ready, "unauthorized" until USB debugging is allowed inside the headset."""
+        out = _adb("devices", "-l")
+        if out is None:
+            return None
+        found = []
+        for line in out.splitlines()[1:]:
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            model = next((p[6:].replace("_", " ") for p in parts[2:] if p.startswith("model:")), "")
+            found.append({"serial": parts[0], "state": parts[1], "model": model})
+        return found
+
+    def headset_app_version(self, serial):
+        """The version of Goggles Link installed on a headset, or "" if it isn't installed."""
+        out = _adb("-s", serial, "shell", "dumpsys", "package", self.PACKAGE) or ""
+        m = re.search(r"versionName=(\S+)", out)
+        return m.group(1) if m else ""
+
+    def install_on_headset(self, say=lambda text: None):
+        """Install (or update) the Goggles Link app on the headset plugged in by USB, set the
+        cable up for streaming and open the app. `say` is told each step. -> (ok, message)"""
+        if not shutil.which("adb"):
+            return False, "The installer needs adb. Update Goggles OS (Goggles Update), or run: sudo apt install adb"
+        if not os.path.isfile(self.APK):
+            return False, "The headset app isn't on this PC yet. Update Goggles OS (Goggles Update)."
+        say("Looking for a headset on USB…")
+        _adb("start-server", timeout=20)
+        headsets = self.usb_headsets()
+        if not headsets:
+            return False, ("No headset found on USB. Plug it in with a USB cable. The first time, the headset needs "
+                           "developer mode: in the Meta Horizon phone app, open Devices > your headset > Headset "
+                           "settings > Developer mode and turn it on, then restart the headset.")
+        ready = [h for h in headsets if h["state"] == "device"]
+        if not ready:
+            if any(h["state"] == "unauthorized" for h in headsets):
+                return False, ("The headset is asking for permission. Put it on, tick \"Always allow from this "
+                               "computer\", press Allow, then press Install again.")
+            return False, f"The headset isn't ready (adb says: {headsets[0]['state']}). Unplug it, plug it back in and try again."
+        if len(ready) > 1:
+            return False, "More than one headset is plugged in. Leave only the one you want to install on."
+        headset = ready[0]
+        name = headset["model"] or "the headset"
+        serial = headset["serial"]
+        before = self.headset_app_version(serial)
+        say(f"Installing Goggles Link {self.apk_version()} on {name}…")
+        result = _adb_run("-s", serial, "install", "-r", self.APK, timeout=300)
+        if result.returncode != 0 and "INSTALL_FAILED_UPDATE_INCOMPATIBLE" in result.stdout + result.stderr:
+            # signed with another key (a test build): replace it; its in-headset settings are lost
+            say("Replacing a copy of the app that came from somewhere else…")
+            _adb_run("-s", serial, "uninstall", self.PACKAGE, timeout=60)
+            result = _adb_run("-s", serial, "install", "-r", self.APK, timeout=300)
+        if result.returncode != 0:
+            reason = (result.stdout + result.stderr).strip().splitlines()[-1:] or ["no answer from the headset"]
+            return False, f"Couldn't install the app on {name}: {reason[0]}"
+        # Streaming through the cable: the headset's port 9757 leads to this PC until it is unplugged
+        port = str(self.config().get("port", self.PORT))
+        _adb_run("-s", serial, "reverse", f"tcp:{port}", f"tcp:{port}", timeout=20)
+        say("Opening Goggles Link in the headset…")
+        _adb_run("-s", serial, "shell", "am", "start", "-n", f"{self.PACKAGE}/{self.ACTIVITY}", timeout=20)
+        after = self.headset_app_version(serial) or self.apk_version()
+        if before and before != after:
+            return True, f"Goggles Link updated from {before} to {after} on {name}. It is open in the headset."
+        if before:
+            return True, f"Goggles Link {after} reinstalled on {name}. It is open in the headset."
+        return True, (f"Goggles Link {after} installed on {name} and opened. Put the headset on; when it asks for a "
+                      "PIN, press Pair a headset here.")
 
 
 ENGINES = {cls.id: cls for cls in (WiVRn, GogglesLink)}

@@ -19,7 +19,8 @@ signal quit_requested
 signal smoothing_changed(amount: float)
 signal scale_changed(factor: float)
 signal setting_changed(key: String, value: Variant)   # saved to settings.json by main.gd
-signal big_screen_toggled(on: bool)
+signal big_screen_toggled(on: bool)                  # pop the desktop out into floating screens
+signal keyboard_requested
 
 const SIZE := Vector2(1280, 860)
 const PANEL_SIZE := Vector2(1280, 736)
@@ -41,6 +42,17 @@ const MUTED := Color("9fbfb4")
 const GLASS := Color(0.047, 0.149, 0.129, 0.9)
 const WELL := Color(0, 0, 0, 0.32)
 const LINE := Color(1, 1, 1, 0.12)
+const VISOR_SHADER := """
+shader_type canvas_item;
+uniform vec4 base : source_color;
+uniform vec4 glint : source_color;
+void fragment() {
+	float at = fract(TIME * 0.09) * 1.8 - 0.4;
+	float shine = smoothstep(0.16, 0.0, abs(UV.x - at));
+	float ends = smoothstep(0.0, 0.06, UV.x) * smoothstep(1.0, 0.94, UV.x);
+	COLOR = vec4(mix(base.rgb, glint.rgb, shine), ends);
+}
+"""
 
 var current := "game"
 var _track: Control
@@ -62,6 +74,8 @@ var _record_button: Button
 var _quit_button: Button
 var _quit_armed_until := 0
 var _smoothing_slider: HSlider
+var _passthrough_toggle: Button
+var _surroundings := "goggles"           # the environment to go back to when passthrough is turned off
 var _choices := {}                        # setting key -> [{value: Button}] (a setting can be shown twice)
 var _stats := {}                          # status strip: "head", "left", "right", "ping" -> [title, value]
 var _stream_rows: VBoxContainer           # Settings > Streaming
@@ -70,6 +84,10 @@ var _desktop_note: Label
 var _big_button: Button
 var _settings_tabs := {}
 var _tween: Tween
+var sounds: Node                          # ui_sounds.gd (set by main.gd); null = silent
+var animate_ui := true                    # hover and press motion (Settings: animations)
+var _fonts := {}                          # "body", "body_bold", "head", "head_medium" -> Font
+var _slider_dragging := false
 # swipe state
 var _swiping := false
 var _axis := ""
@@ -82,6 +100,10 @@ func _ready() -> void:
 	custom_minimum_size = SIZE
 	theme = _make_theme()
 	_build()
+	_wire(self)
+	get_tree().node_added.connect(func(node):
+		if is_ancestor_of(node):
+			_wire(node))
 	show_panel("game", false)
 	var timer := Timer.new()
 	timer.wait_time = 5.0
@@ -110,25 +132,34 @@ func go(dir: String) -> bool:
 
 
 func show_panel(id: String, animate := true) -> void:
+	if animate and id != current:
+		_play("swipe")
 	current = id
 	var target := -Vector2(POS[id]) * (PANEL_SIZE + Vector2(GAP, GAP))
 	if _tween:
 		_tween.kill()
 	if animate:
-		_tween = create_tween()
-		_tween.tween_property(_track, "position", target, 0.38).set_trans(Tween.TRANS_QUART).set_ease(Tween.EASE_OUT)
+		_tween = create_tween().set_parallel()
+		_tween.tween_property(_track, "position", target, 0.42).set_trans(Tween.TRANS_QUART).set_ease(Tween.EASE_OUT)
+		# the panel arriving brightens as the one leaving dims
+		for panel in _track.get_children():
+			_tween.tween_property(panel, "modulate:a", 1.0 if panel.name == id else 0.35, 0.3)
 	else:
 		_track.position = target
-	# Panels outside the window are clipped, so only the one in view can be seen or clicked
-	for panel in _track.get_children():
-		panel.modulate.a = 1.0 if panel.name == id else 0.5
+		for panel in _track.get_children():
+			panel.modulate.a = 1.0 if panel.name == id else 0.35
 	for dir in _hints:
 		var n := neighbour(id, dir)
 		_hints[dir].visible = n != ""
 		if n != "":
 			_hints[dir].text = _hint_text(dir, TITLES[n])
 	for key in _map:
-		_map[key].color = ACCENT if key == id else Color(1, 1, 1, 0.18)
+		var dot: ColorRect = _map[key]
+		var colour := ACCENT if key == id else Color(1, 1, 1, 0.18)
+		if animate:
+			create_tween().tween_property(dot, "color", colour, 0.25)
+		else:
+			dot.color = colour
 	_where.text = TITLES[id]
 
 
@@ -187,10 +218,20 @@ func _swipe_target(d: float) -> String:
 func say(text: String) -> void:
 	_toast.text = text
 	_toast.visible = true
-	_toast.modulate.a = 1.0
+	_toast.reset_size()
+	_toast.pivot_offset = Vector2(_toast.size.x / 2.0, _toast.size.y)
+	if _toast.has_meta("tween"):
+		(_toast.get_meta("tween") as Tween).kill()
 	var t := create_tween()
-	t.tween_interval(1.6)
-	t.tween_property(_toast, "modulate:a", 0.0, 0.4)
+	_toast.set_meta("tween", t)
+	# pops up from the bottom edge, waits, then fades
+	_toast.modulate.a = 0.0
+	_toast.scale = Vector2(0.9, 0.9)
+	t.set_parallel()
+	t.tween_property(_toast, "modulate:a", 1.0, 0.18)
+	t.tween_property(_toast, "scale", Vector2.ONE, 0.28).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	t.chain().tween_interval(1.8 + text.length() * 0.02)
+	t.chain().tween_property(_toast, "modulate:a", 0.0, 0.4)
 
 
 func set_status(text: String) -> void:
@@ -222,6 +263,12 @@ func _build() -> void:
 	visor.position = Vector2(34, 0)
 	visor.size = Vector2(PANEL_SIZE.x - 68, 3)
 	visor.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var shimmer := ShaderMaterial.new()      # a slow glint travelling along it
+	shimmer.shader = Shader.new()
+	shimmer.shader.code = VISOR_SHADER
+	shimmer.set_shader_parameter("base", ACCENT)
+	shimmer.set_shader_parameter("glint", ACCENT_2)
+	visor.material = shimmer
 	window.add_child(visor)
 
 	for dir in DIRS:
@@ -296,6 +343,18 @@ func _build_game(body: Control) -> void:
 	_game_art.modulate = Color(0.55, 0.55, 0.55)        # dimmed, so the text over it stays readable
 	_game_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	art.add_child(_game_art)
+	var shade := TextureRect.new()          # darker towards the bottom, where the text is
+	var fade := GradientTexture2D.new()
+	fade.gradient = Gradient.new()
+	fade.gradient.set_color(0, Color(0, 0, 0, 0))
+	fade.gradient.set_color(1, Color(0.01, 0.05, 0.045, 0.85))
+	fade.fill_from = Vector2(0, 0.35)
+	fade.fill_to = Vector2(0, 1)
+	shade.texture = fade
+	shade.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	shade.stretch_mode = TextureRect.STRETCH_SCALE
+	shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	art.add_child(shade)
 	var art_box := VBoxContainer.new()
 	art_box.alignment = BoxContainer.ALIGNMENT_END
 	art.add_child(art_box)
@@ -425,7 +484,15 @@ func _build_quick(body: Control) -> void:
 	grid.add_theme_constant_override("h_separation", 12)
 	grid.add_theme_constant_override("v_separation", 12)
 	box.add_child(grid)
-	for text in ["Mic mute", "Passthrough", "Boundary", "Do not disturb", "Smoothing", "Stats overlay", "Night tint"]:
+	_passthrough_toggle = _button("Passthrough")
+	_passthrough_toggle.toggle_mode = true
+	_passthrough_toggle.theme_type_variation = &"Toggle"
+	_passthrough_toggle.toggled.connect(func(on):
+		var value := "passthrough" if on else _surroundings
+		_select_choice("environment", value)
+		setting_changed.emit("environment", value))
+	grid.add_child(_passthrough_toggle)
+	for text in ["Mic mute", "Boundary", "Do not disturb", "Smoothing", "Stats overlay", "Night tint"]:
 		var toggle := _button(text)
 		toggle.toggle_mode = true
 		toggle.theme_type_variation = &"Toggle"
@@ -459,12 +526,16 @@ func _build_desktop(body: Control) -> void:
 	box.add_child(row)
 	for button in _choice_buttons("desktop_screen", [["all", "All screens"], ["active", "Active screen"]]):
 		row.add_child(button)
-	_big_button = _button("Big screen")
+	_big_button = _button("Pop out screens")
 	_big_button.toggle_mode = true
 	_big_button.theme_type_variation = &"Toggle"
 	_big_button.toggled.connect(func(on): big_screen_toggled.emit(on))
 	row.add_child(_big_button)
-	var note := _label("View only for now: use the PC's mouse and keyboard to control it.", &"Muted", true)
+	var keys := _button("Keyboard")
+	keys.theme_type_variation = &"Toggle"
+	keys.pressed.connect(func(): keyboard_requested.emit())
+	row.add_child(keys)
+	var note := _label("Point to move the PC's mouse, trigger clicks, B/Y right-clicks, the stick scrolls.", &"Muted", true)
 	note.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	note.size_flags_stretch_ratio = 1.6
 	note.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -477,6 +548,22 @@ func set_desktop(texture: Texture2D, message := "") -> void:
 	_desktop_note.visible = texture == null or message != ""
 	_desktop_note.text = message if message != "" else "Starting the desktop view…"
 	_desktop_view.modulate.a = 0.35 if message != "" else 1.0
+
+
+## The spot of the desktop picture (0..1) under a point of this interface, or null when the
+## point isn't on the picture.
+func desktop_uv(at: Vector2) -> Variant:
+	if _desktop_view == null or _desktop_view.texture == null or not _desktop_view.is_visible_in_tree():
+		return null
+	var rect := _desktop_view.get_global_rect()
+	var picture := _desktop_view.texture.get_size()
+	if picture.x <= 0 or picture.y <= 0 or rect.size.x <= 0 or rect.size.y <= 0:
+		return null
+	var fit := minf(rect.size.x / picture.x, rect.size.y / picture.y)     # KEEP_ASPECT_CENTERED
+	var drawn := Rect2(rect.position + (rect.size - picture * fit) / 2.0, picture * fit)
+	if not drawn.has_point(at):
+		return null
+	return (at - drawn.position) / drawn.size
 
 
 func set_big_screen(on: bool) -> void:
@@ -593,6 +680,7 @@ func show_settings(section: String) -> void:
 func _settings_appearance(page: Control) -> void:
 	var scale_slider := _slider_row(page, "Size", 50, 160, 100)
 	scale_slider.value_changed.connect(func(v): scale_changed.emit(v / 100.0))
+	_choice_row(page, "Sounds", "ui_sounds", [["on", "On"], ["quiet", "Quiet"], ["off", "Off"]])
 	page.add_child(_label("To move the dashboard, hold grip on the status bar under the panel and point where you want it. While holding, push the stick forward to send it further away (bigger) or pull it back to bring it closer (smaller). Recentre puts it back in front of you.", &"Muted", true))
 
 
@@ -617,14 +705,14 @@ func _settings_recording(page: Control) -> void:
 
 ## What you see around you when no game is running
 func _settings_home(page: Control) -> void:
-	_choice_row(page, "Surroundings", "environment", [["goggles", "Goggles night"], ["custom", "My picture"], ["none", "Black"]])
-	page.add_child(_label("Shown around you while no game is running, and hidden as soon as a game starts. \"My picture\" uses a 360° photo you choose in the GogglesXR app on the desktop (VR settings > Home environment).", &"Muted", true))
+	_choice_row(page, "Surroundings", "environment", [["goggles", "Goggles night"], ["custom", "My picture"], ["passthrough", "Passthrough"], ["none", "Black"]])
+	page.add_child(_label("Shown around you while no game is running, and hidden as soon as a game starts. \"My picture\" uses a 360° photo you choose in the GogglesXR app on the desktop (VR settings > Home environment). \"Passthrough\" shows your room through the headset's cameras (Quest 2 and newer).", &"Muted", true))
 
 
 func _settings_desktop(page: Control) -> void:
 	_choice_row(page, "Screen", "desktop_screen", [["all", "All screens"], ["active", "Active screen"]])
-	_choice_row(page, "Frame rate", "desktop_fps", [[15, "15"], [10, "10"], [30, "30"]])
-	page.add_child(_label("The Desktop panel (below Current Game) shows your PC's desktop. Big screen floats a large copy of it in front of you, also while a game runs. Higher frame rates use more of the PC's power.", &"Muted", true))
+	_choice_row(page, "Frame rate", "desktop_fps", [[30, "30"], [15, "15"], [60, "60"]])
+	page.add_child(_label("The Desktop panel (below Current Game) shows your PC's desktop. Pop out screens floats each monitor in front of you, also while a game runs: point at one to use it, grip to move it. Higher frame rates use more of the PC's power.", &"Muted", true))
 
 
 func _settings_streaming(page: Control) -> void:
@@ -769,6 +857,16 @@ func apply_settings(prefs: Dictionary) -> void:
 	for key in _choices:
 		if prefs.has(key):
 			_select_choice(key, prefs[key])
+	if prefs.has("environment"):
+		_show_environment(str(prefs.environment))
+
+
+## Keep the Quick Settings Passthrough toggle in step with the chosen surroundings.
+func _show_environment(value: String) -> void:
+	if value != "passthrough":
+		_surroundings = value
+	if _passthrough_toggle:
+		_passthrough_toggle.set_pressed_no_signal(value == "passthrough")
 
 
 ## The chosen value of a setting's buttons.
@@ -804,6 +902,59 @@ func _tick() -> void:
 	var days := ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 	var months := ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 	_date.text = "%s %d %s" % [days[now.weekday], now.day, months[now.month - 1]]
+
+
+# ------------------------------------------------------------------ sound and motion
+func _play(name: String, pitch := 1.0) -> void:
+	if sounds:
+		sounds.play(name, pitch)
+
+
+## Give buttons and sliders their sounds and hover/press motion (also ones added later).
+func _wire(node: Node) -> void:
+	if node.has_meta("wired"):
+		return
+	if node is BaseButton:
+		node.set_meta("wired", true)
+		var b: BaseButton = node
+		b.resized.connect(func(): b.pivot_offset = b.size / 2.0)
+		b.pivot_offset = b.size / 2.0
+		b.mouse_entered.connect(func():
+			if not b.disabled:
+				_play("hover")
+				_bump(b, 1.025))
+		b.mouse_exited.connect(func(): _bump(b, 1.0))
+		b.button_down.connect(func(): _bump(b, 0.965, 0.07))
+		b.button_up.connect(func(): _bump(b, 1.025 if b.is_hovered() else 1.0, 0.22))
+		b.pressed.connect(func():
+			if b.theme_type_variation == &"Hint":
+				return                    # moving to the panel makes its own sound
+			if b.toggle_mode:
+				_play("toggle", 1.12 if b.button_pressed else 0.9)
+			else:
+				_play("click"))
+	elif node is Slider:
+		node.set_meta("wired", true)
+		var slider: Slider = node
+		slider.drag_started.connect(func(): _slider_dragging = true)
+		slider.drag_ended.connect(func(_changed): _slider_dragging = false)
+		slider.value_changed.connect(func(v):
+			if _slider_dragging:
+				_play("key", 0.8 + 0.5 * inverse_lerp(slider.min_value, slider.max_value, v)))
+	for child in node.get_children():
+		_wire(child)
+
+
+## Ease a control's size towards `to` (1 = normal).
+func _bump(control: Control, to: float, seconds := 0.16) -> void:
+	if control.has_meta("bump"):
+		(control.get_meta("bump") as Tween).kill()
+	if not animate_ui or not control.is_inside_tree():
+		control.scale = Vector2.ONE
+		return
+	var t := control.create_tween()
+	control.set_meta("bump", t)
+	t.tween_property(control, "scale", Vector2(to, to), seconds).set_trans(Tween.TRANS_BACK if to > 1.0 else Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 
 
 # ------------------------------------------------------------------ small helpers
@@ -865,6 +1016,8 @@ func _choice_buttons(key: String, options: Array) -> Array:
 
 
 func _select_choice(key: String, value: Variant) -> void:
+	if key == "environment":
+		_show_environment(str(value))
 	for buttons in _choices.get(key, []):
 		var found := false
 		for option in buttons:
@@ -921,6 +1074,32 @@ func _hint_text(dir: String, title: String) -> String:
 		_: return title + "  ▶"
 
 
+## A soft accent-coloured glow around a box.
+func _glow(box: StyleBoxFlat, strength: float) -> StyleBoxFlat:
+	box.shadow_color = Color(ACCENT, strength)
+	box.shadow_size = 12
+	return box
+
+
+## The slider's round handle, drawn here (no image files to ship).
+func _knob(diameter: int, lit: bool) -> ImageTexture:
+	var image := Image.create(diameter + 8, diameter + 8, false, Image.FORMAT_RGBA8)
+	var centre := Vector2(image.get_width(), image.get_height()) / 2.0
+	var r := diameter / 2.0
+	for y in image.get_height():
+		for x in image.get_width():
+			var d := Vector2(x + 0.5, y + 0.5).distance_to(centre)
+			var c := Color(0, 0, 0, 0)
+			if d <= r + 4.0 and lit:
+				c = Color(ACCENT, 0.25 * clampf((r + 4.0 - d) / 4.0, 0.0, 1.0))      # halo
+			if d <= r:
+				var ring := d > r - 4.0
+				c = Color.WHITE if ring else ACCENT.lightened(0.1 if lit else 0.0)
+				c.a = clampf(r - d + 0.5, 0.0, 1.0)                               # smooth edge
+			image.set_pixel(x, y, c)
+	return ImageTexture.create_from_image(image)
+
+
 func _box(color: Color, radius := 18, border := LINE, border_width := 1, margin := 0) -> StyleBoxFlat:
 	var box := StyleBoxFlat.new()
 	box.bg_color = color
@@ -932,11 +1111,43 @@ func _box(color: Color, radius := 18, border := LINE, border_width := 1, margin 
 	return box
 
 
+## The website's fonts (fonts/README.md), with the system's fonts for any missing characters.
+func _load_fonts() -> void:
+	var system := SystemFont.new()
+	system.font_names = PackedStringArray(["Noto Sans", "Noto Sans Symbols", "Noto Sans Symbols 2", "DejaVu Sans"])
+	var files := {"body": "inter-400", "body_bold": "inter-600", "head": "outfit-600", "head_medium": "outfit-500"}
+	for key in files:
+		var path := ProjectSettings.globalize_path("res://fonts/%s.woff2" % files[key])
+		var font := FontFile.new()
+		if FileAccess.file_exists(path) and font.load_dynamic_font(path) == OK:
+			font.fallbacks = [system]
+			font.multichannel_signed_distance_field = false
+			font.oversampling = 2.0          # crisp when the panel is near your face
+			_fonts[key] = font
+	if _fonts.has("body_bold"):
+		var spaced := FontVariation.new()   # small capitals with air between the letters
+		spaced.base_font = _fonts.body_bold
+		spaced.spacing_glyph = 2
+		_fonts["eyebrow"] = spaced
+
+
+func _font(t: Theme, type: String, key: String) -> void:
+	if _fonts.has(key):
+		t.set_font("font", type, _fonts[key])
+
+
 func _make_theme() -> Theme:
+	_load_fonts()
 	var t := Theme.new()
 	t.default_font_size = 24
+	if _fonts.has("body"):
+		t.default_font = _fonts.body
 	t.set_color("font_color", "Label", INK)
-	t.set_stylebox("panel", "PanelContainer", _box(GLASS, 26, Color(ACCENT, 0.3), 1, 34))
+	var glass := _box(GLASS, 30, Color(ACCENT, 0.24), 1, 34)
+	glass.shadow_color = Color(0, 0, 0, 0.35)
+	glass.shadow_size = 28
+	glass.shadow_offset = Vector2(0, 10)
+	t.set_stylebox("panel", "PanelContainer", glass)
 
 	for variation in ["Title", "Eyebrow", "Muted", "Clock", "Where", "Toast", "Small", "Stat"]:
 		t.set_type_variation(variation, "Label")
@@ -951,7 +1162,15 @@ func _make_theme() -> Theme:
 	t.set_font_size("font_size", "Clock", 40)
 	t.set_font_size("font_size", "Where", 26)
 	t.set_font_size("font_size", "Toast", 22)
-	t.set_stylebox("normal", "Toast", _box(Color(0.016, 0.07, 0.06, 0.96), 14, Color(ACCENT, 0.4), 1, 14))
+	var toast := _box(Color(0.016, 0.07, 0.06, 0.96), 18, Color(ACCENT, 0.45), 1, 16)
+	toast.shadow_color = Color(ACCENT, 0.18)
+	toast.shadow_size = 16
+	t.set_stylebox("normal", "Toast", toast)
+	_font(t, "Title", "head")
+	_font(t, "Clock", "head_medium")
+	_font(t, "Where", "head_medium")
+	_font(t, "Stat", "head")
+	_font(t, "Eyebrow", "eyebrow")
 
 	for variation in ["Art", "Well", "Strip"]:
 		t.set_type_variation(variation, "PanelContainer")
@@ -964,32 +1183,34 @@ func _make_theme() -> Theme:
 	t.set_color("font_hover_color", "Button", INK)
 	t.set_color("font_pressed_color", "Button", INK)
 	t.set_color("font_disabled_color", "Button", INK)
-	t.set_stylebox("normal", "Button", _box(Color(1, 1, 1, 0.06), 14, LINE, 1, 14))
-	t.set_stylebox("hover", "Button", _box(Color(ACCENT, 0.14), 14, ACCENT, 1, 14))
-	t.set_stylebox("pressed", "Button", _box(Color(ACCENT, 0.26), 14, ACCENT, 1, 14))
-	t.set_stylebox("disabled", "Button", _box(Color(1, 1, 1, 0.06), 14, LINE, 1, 14))
+	_font(t, "Button", "body_bold")
+	t.set_font_size("font_size", "Button", 22)
+	t.set_stylebox("normal", "Button", _box(Color(1, 1, 1, 0.06), 16, LINE, 1, 14))
+	t.set_stylebox("hover", "Button", _glow(_box(Color(ACCENT, 0.14), 16, ACCENT, 1, 14), 0.22))
+	t.set_stylebox("pressed", "Button", _glow(_box(Color(ACCENT, 0.26), 16, ACCENT, 1, 14), 0.3))
+	t.set_stylebox("disabled", "Button", _box(Color(1, 1, 1, 0.06), 16, LINE, 1, 14))
 	t.set_stylebox("focus", "Button", StyleBoxEmpty.new())
 
 	for variation in ["Primary", "Toggle", "Card", "Tab", "Hint"]:
 		t.set_type_variation(variation, "Button")
 	for state in ["font_color", "font_hover_color", "font_pressed_color"]:
 		t.set_color(state, "Primary", Color("052012"))
-	t.set_stylebox("normal", "Primary", _box(ACCENT, 14, ACCENT, 0, 14))
-	t.set_stylebox("hover", "Primary", _box(ACCENT.lightened(0.18), 14, ACCENT, 0, 14))
-	t.set_stylebox("pressed", "Primary", _box(ACCENT.darkened(0.15), 14, ACCENT, 0, 14))
+	t.set_stylebox("normal", "Primary", _glow(_box(ACCENT, 16, ACCENT, 0, 14), 0.28))
+	t.set_stylebox("hover", "Primary", _glow(_box(ACCENT.lightened(0.18), 16, ACCENT, 0, 14), 0.45))
+	t.set_stylebox("pressed", "Primary", _glow(_box(ACCENT.darkened(0.15), 16, ACCENT, 0, 14), 0.2))
 	t.set_stylebox("normal", "Toggle", _box(WELL, 16, LINE, 1, 16))
 	t.set_stylebox("disabled", "Toggle", _box(WELL, 16, LINE, 1, 16))
-	t.set_stylebox("pressed", "Toggle", _box(Color(ACCENT, 0.2), 16, ACCENT, 2, 16))
-	t.set_stylebox("normal", "Card", _box(WELL, 16, LINE, 1, 16))
-	t.set_stylebox("hover", "Card", _box(Color(ACCENT, 0.14), 16, ACCENT, 1, 16))
+	t.set_stylebox("pressed", "Toggle", _glow(_box(Color(ACCENT, 0.22), 16, ACCENT, 2, 16), 0.25))
+	t.set_stylebox("normal", "Card", _box(WELL, 18, LINE, 1, 16))
+	t.set_stylebox("hover", "Card", _glow(_box(Color(ACCENT, 0.14), 18, ACCENT, 1, 16), 0.25))
 	t.set_stylebox("normal", "Tab", _box(Color(0, 0, 0, 0), 12, Color(0, 0, 0, 0), 1, 14))
 	t.set_stylebox("pressed", "Tab", _box(Color(ACCENT, 0.16), 12, Color(ACCENT, 0.4), 1, 14))
 	t.set_color("font_color", "Tab", MUTED)
 	t.set_font_size("font_size", "Hint", 18)
 	t.set_color("font_color", "Hint", MUTED)
-	t.set_stylebox("normal", "Hint", _box(Color(0.016, 0.07, 0.06, 0.88), 16, Color(ACCENT, 0.3), 1, 8))
-	t.set_stylebox("hover", "Hint", _box(Color(0.016, 0.07, 0.06, 0.95), 16, ACCENT, 1, 8))
-	t.set_stylebox("pressed", "Hint", _box(Color(ACCENT, 0.25), 16, ACCENT, 1, 8))
+	t.set_stylebox("normal", "Hint", _box(Color(0.016, 0.07, 0.06, 0.88), 99, Color(ACCENT, 0.3), 1, 10))
+	t.set_stylebox("hover", "Hint", _glow(_box(Color(0.016, 0.07, 0.06, 0.95), 99, ACCENT, 1, 10), 0.3))
+	t.set_stylebox("pressed", "Hint", _box(Color(ACCENT, 0.25), 99, ACCENT, 1, 10))
 
 	# Sliders
 	var groove := _box(Color(1, 1, 1, 0.14), 5, Color(0, 0, 0, 0), 0)
@@ -1001,5 +1222,7 @@ func _make_theme() -> Theme:
 	t.set_stylebox("slider", "HSlider", groove)
 	t.set_stylebox("grabber_area", "HSlider", fill)
 	t.set_stylebox("grabber_area_highlight", "HSlider", fill)
+	t.set_icon("grabber", "HSlider", _knob(30, false))
+	t.set_icon("grabber_highlight", "HSlider", _knob(34, true))
 	t.set_constant("separation", "HBoxContainer", 12)
 	return t

@@ -381,6 +381,8 @@ if [ -f "$G/gogglesxr/dashboard/project.godot" ]; then
   install -D -m755 -t "$XR_DASH/bin" "$G"/gogglesxr/dashboard/bin/*.so
   # The home environment: the 360-degree picture shown while no game is running
   install -D -m644 -t "$XR_DASH/environments" "$G"/gogglesxr/dashboard/environments/*.jpg
+  install -D -m644 -t "$XR_DASH/sounds" "$G"/gogglesxr/dashboard/sounds/*.wav "$G"/gogglesxr/dashboard/sounds/*.txt
+  install -D -m644 -t "$XR_DASH/fonts" "$G"/gogglesxr/dashboard/fonts/*.woff2 "$G"/gogglesxr/dashboard/fonts/*.txt
 else
   warn "GogglesXR dashboard sources missing"
 fi
@@ -388,6 +390,12 @@ fi
 # answers programs listed in a desktop file (overlay: org.gogglesos.gogglesxr-desktop-grab.desktop)
 if [ -f "$G/gogglesxr/desktop-grab/gogglesxr-desktop-grab" ]; then
   install -D -m755 "$G/gogglesxr/desktop-grab/gogglesxr-desktop-grab" "/usr/libexec/$DISTRO_ID/gogglesxr-desktop-grab"
+  # ...and its mouse and keyboard (uinput; overlay: /etc/udev/rules.d/60-gogglesxr-uinput.rules)
+  install -D -m755 "$G/gogglesxr/desktop-grab/gogglesxr-desktop-input" "/usr/libexec/$DISTRO_ID/gogglesxr-desktop-input"
+  if [ "${APPLY_MODE:-build}" != build ]; then     # on a running system: use the new rule now
+    udevadm control --reload 2>/dev/null || true
+    udevadm trigger --subsystem-match=misc --sysname-match=uinput 2>/dev/null || true
+  fi
 else
   warn "GogglesXR desktop view missing"
 fi

@@ -33,7 +33,7 @@ AUTOSTART_USER = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(
                               "autostart", "gogglesxr.desktop")
 DEFAULTS = {"keep_ready": True, "auto_dashboard": True, "show_all_games": False, "animations": True,
             "pointer_smoothing": 60, "engine": "wivrn", "environment": "goggles", "environment_image": "",
-            "desktop_screen": "all", "desktop_fps": 15}
+            "desktop_screen": "all", "desktop_fps": 30}
 # Recording and screenshot options: (setting, label, [(value, label)], note). The values match
 # CAPTURE_CHOICES in the gogglesxr command, which reads them when a recording starts.
 CAPTURE_OPTIONS = [
@@ -478,6 +478,15 @@ class Window(QMainWindow):
         self.home_pair_button.clicked.connect(self.pair)
         head.addWidget(self.home_pair_button, 0, Qt.AlignmentFlag.AlignVCenter)
         link_box.addLayout(head)
+        install_row = QHBoxLayout()
+        self.install_note = label("", "muted", True)
+        install_row.addWidget(self.install_note, 1)
+        self.install_button = QPushButton("Install on headset")
+        self.install_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.install_button.setToolTip("Installs or updates the Goggles Link app on a headset plugged in with a USB cable")
+        self.install_button.clicked.connect(self.install_headset)
+        install_row.addWidget(self.install_button, 0, Qt.AlignmentFlag.AlignTop)
+        link_box.addLayout(install_row)
         self.home_pin = label("", "pin")
         self.home_pin.hide()
         link_box.addWidget(self.home_pin)
@@ -731,7 +740,8 @@ class Window(QMainWindow):
                           "on small buttons. Takes effect the next time the dashboard opens.", "muted", True))
 
         f = group("Home environment", "What you see around you in the headset while no game is running.")
-        self.env_combo = self.choice(f, "Surroundings", [("goggles", "Goggles night (built in)"), ("custom", "My 360° picture"), ("none", "Black")],
+        self.env_combo = self.choice(f, "Surroundings", [("goggles", "Goggles night (built in)"), ("custom", "My 360° picture"),
+                                                             ("passthrough", "Passthrough (your room)"), ("none", "Black")],
                     self.settings["environment"], lambda v: self.change("environment", v))
         row = QHBoxLayout()
         row.addSpacing(178)
@@ -751,10 +761,10 @@ class Window(QMainWindow):
         for key, text, choices, note in CAPTURE_OPTIONS:
             self.choice(f, text, choices, self.settings[key], lambda v, k=key: self.change(k, v), note)
 
-        f = group("Desktop view", "The dashboard's Desktop panel and big screen show this PC's desktop in the headset.")
+        f = group("Desktop view", "The dashboard's Desktop panel and floating screens show this PC's desktop in the headset, and let you use it with the controllers.")
         self.choice(f, "Screen", [("all", "All screens"), ("active", "The screen with the mouse")],
                     self.settings["desktop_screen"], lambda v: self.change("desktop_screen", v))
-        self.choice(f, "Frame rate", [(15, "15 fps"), (10, "10 fps (lighter)"), (30, "30 fps (smoother)")],
+        self.choice(f, "Frame rate", [(30, "30 fps"), (15, "15 fps (lighter)"), (60, "60 fps (smoothest, busier PC)")],
                     self.settings["desktop_fps"], lambda v: self.change("desktop_fps", v))
         inner_box.addStretch(1)
         return widget
@@ -942,6 +952,27 @@ class Window(QMainWindow):
             self.poll_headset(True)
         self.run_bg(work, got)
 
+    def install_headset(self):
+        """Install or update the Goggles Link app on the headset plugged in by USB."""
+        link = engines.ENGINES["goggleslink"]()
+        self.install_button.setEnabled(False)
+        self.install_note.setText("Starting…")
+        steps = queue.Queue()
+
+        def show_steps():
+            while not steps.empty():
+                self.install_note.setText(steps.get())
+        ticker = QTimer(self)
+        ticker.timeout.connect(show_steps)
+        ticker.start(150)
+
+        def done(result):
+            ticker.stop()
+            ok, message = result if isinstance(result, tuple) else (False, str(result))
+            self.install_note.setText(("✓ " if ok else "") + message)
+            self.install_button.setEnabled(True)
+        self.run_bg(lambda: link.install_on_headset(steps.put), done)
+
     def show_pin_text(self, pin, note):
         self.home_pin.setText(pin)
         self.home_pin.setVisible(bool(pin))
@@ -1016,6 +1047,11 @@ class Window(QMainWindow):
             self.server_button.setText("Stop server" if running else "Start server")
         self.server_dot.setStyleSheet(f"color: {ACCENT if running else MUTED}; font-size: 16px;")
         self.server_button.setEnabled(not self.server_busy and bool(engine.root()))
+        link = engines.ENGINES["goggleslink"]()
+        self.install_button.setVisible(link.installed())
+        if link.installed() and not self.install_note.text():
+            self.install_note.setText(f"Headset app: Goggles Link {link.apk_version()}. Plug the headset in with a USB "
+                                      "cable to install or update it.")
         entry = getattr(self, "tray_server", None)
         if entry is not None:
             entry.setText("Stop streaming server" if running else "Start streaming server")
