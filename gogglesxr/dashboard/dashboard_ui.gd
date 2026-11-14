@@ -63,6 +63,8 @@ var _record_button: Button
 var _quit_button: Button
 var _quit_armed_until := 0
 var _smoothing_slider: HSlider
+var _passthrough_toggle: Button
+var _surroundings := "goggles"           # the environment to go back to when passthrough is turned off
 var _choices := {}                        # setting key -> [{value: Button}] (a setting can be shown twice)
 var _stats := {}                          # status strip: "head", "left", "right", "ping" -> [title, value]
 var _stream_rows: VBoxContainer           # Settings > Streaming
@@ -426,7 +428,15 @@ func _build_quick(body: Control) -> void:
 	grid.add_theme_constant_override("h_separation", 12)
 	grid.add_theme_constant_override("v_separation", 12)
 	box.add_child(grid)
-	for text in ["Mic mute", "Passthrough", "Boundary", "Do not disturb", "Smoothing", "Stats overlay", "Night tint"]:
+	_passthrough_toggle = _button("Passthrough")
+	_passthrough_toggle.toggle_mode = true
+	_passthrough_toggle.theme_type_variation = &"Toggle"
+	_passthrough_toggle.toggled.connect(func(on):
+		var value := "passthrough" if on else _surroundings
+		_select_choice("environment", value)
+		setting_changed.emit("environment", value))
+	grid.add_child(_passthrough_toggle)
+	for text in ["Mic mute", "Boundary", "Do not disturb", "Smoothing", "Stats overlay", "Night tint"]:
 		var toggle := _button(text)
 		toggle.toggle_mode = true
 		toggle.theme_type_variation = &"Toggle"
@@ -638,8 +648,8 @@ func _settings_recording(page: Control) -> void:
 
 ## What you see around you when no game is running
 func _settings_home(page: Control) -> void:
-	_choice_row(page, "Surroundings", "environment", [["goggles", "Goggles night"], ["custom", "My picture"], ["none", "Black"]])
-	page.add_child(_label("Shown around you while no game is running, and hidden as soon as a game starts. \"My picture\" uses a 360° photo you choose in the GogglesXR app on the desktop (VR settings > Home environment).", &"Muted", true))
+	_choice_row(page, "Surroundings", "environment", [["goggles", "Goggles night"], ["custom", "My picture"], ["passthrough", "Passthrough"], ["none", "Black"]])
+	page.add_child(_label("Shown around you while no game is running, and hidden as soon as a game starts. \"My picture\" uses a 360° photo you choose in the GogglesXR app on the desktop (VR settings > Home environment). \"Passthrough\" shows your room through the headset's cameras (Quest 2 and newer).", &"Muted", true))
 
 
 func _settings_desktop(page: Control) -> void:
@@ -790,6 +800,16 @@ func apply_settings(prefs: Dictionary) -> void:
 	for key in _choices:
 		if prefs.has(key):
 			_select_choice(key, prefs[key])
+	if prefs.has("environment"):
+		_show_environment(str(prefs.environment))
+
+
+## Keep the Quick Settings Passthrough toggle in step with the chosen surroundings.
+func _show_environment(value: String) -> void:
+	if value != "passthrough":
+		_surroundings = value
+	if _passthrough_toggle:
+		_passthrough_toggle.set_pressed_no_signal(value == "passthrough")
 
 
 ## The chosen value of a setting's buttons.
@@ -886,6 +906,8 @@ func _choice_buttons(key: String, options: Array) -> Array:
 
 
 func _select_choice(key: String, value: Variant) -> void:
+	if key == "environment":
+		_show_environment(str(value))
 	for buttons in _choices.get(key, []):
 		var found := false
 		for option in buttons:

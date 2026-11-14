@@ -740,7 +740,8 @@ class Window(QMainWindow):
                           "on small buttons. Takes effect the next time the dashboard opens.", "muted", True))
 
         f = group("Home environment", "What you see around you in the headset while no game is running.")
-        self.env_combo = self.choice(f, "Surroundings", [("goggles", "Goggles night (built in)"), ("custom", "My 360° picture"), ("none", "Black")],
+        self.env_combo = self.choice(f, "Surroundings", [("goggles", "Goggles night (built in)"), ("custom", "My 360° picture"),
+                                                             ("passthrough", "Passthrough (your room)"), ("none", "Black")],
                     self.settings["environment"], lambda v: self.change("environment", v))
         row = QHBoxLayout()
         row.addSpacing(178)

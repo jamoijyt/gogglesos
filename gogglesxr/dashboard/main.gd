@@ -77,6 +77,7 @@ var prefs := {}                           # settings.json, shared with the deskt
 var world_env: WorldEnvironment
 var home_sky: Sky                         # the home environment, when one is chosen and loaded
 var home_shown := false
+var passthrough := false                  # the headset's cameras show the room behind the dashboard
 var game_info := {}                       # the Steam game running, from _poll_game
 var headset_info := {}                    # gogglesxr headset --json
 var headset_thread: Thread
@@ -352,15 +353,16 @@ func _capture_status_path() -> String:
 
 
 # ------------------------------------------------------------------ home environment
-## A 360° picture around you while no game is running (Settings > Home): Goggles OS's own
-## night scene, a picture of your own (chosen in the desktop app), or nothing.
+## What's around you while no game is running (Settings > Home): Goggles OS's own night scene,
+## a 360° picture of your own (chosen in the desktop app), your room (passthrough) or nothing.
 func _load_home() -> void:
 	home_sky = null
 	var choice := str(prefs.get("environment", "goggles"))
 	var path := ""
+	_set_passthrough(choice == "passthrough")
 	if choice == "custom":
 		path = str(prefs.get("environment_image", ""))
-	elif choice != "none":
+	elif choice not in ["none", "passthrough"]:
 		path = ProjectSettings.globalize_path(HOME_IMAGE)
 	if path != "":
 		var image := Image.load_from_file(path) if FileAccess.file_exists(path) else null
@@ -373,6 +375,25 @@ func _load_home() -> void:
 			home_sky = Sky.new()
 			home_sky.sky_material = material
 	_update_home(true)
+
+
+## Passthrough: ask the runtime to blend our picture over the headset's camera view, where
+## the picture is see-through. Goggles Link and WiVRn offer this on headsets with passthrough
+## (Quest 2, 3, 3S, Pro; Quest 1 shows black).
+func _set_passthrough(on: bool) -> void:
+	var xr := XRServer.find_interface("OpenXR") as OpenXRInterface
+	var supported := xr != null and xr.is_initialized() \
+			and XRInterface.XR_ENV_BLEND_MODE_ALPHA_BLEND in xr.get_supported_environment_blend_modes()
+	if on and xr_active and not supported:
+		ui.say("This headset or link software doesn't offer passthrough, so it's black instead")
+	var use := on and supported
+	if xr != null and xr.is_initialized() and (use or passthrough):
+		xr.environment_blend_mode = XRInterface.XR_ENV_BLEND_MODE_ALPHA_BLEND if use else XRInterface.XR_ENV_BLEND_MODE_OPAQUE
+	passthrough = use or (on and OS.get_environment("GOGGLESXR_SELFTEST") != "")
+	# see-through background: only where nothing is drawn does the room show
+	get_viewport().transparent_bg = overlay or passthrough
+	if world_env:
+		world_env.environment.background_color = Color(0, 0, 0, 0) if passthrough else Color.BLACK
 
 
 func _update_home(force := false) -> void:
@@ -389,7 +410,7 @@ func _update_home(force := false) -> void:
 		environment.background_mode = Environment.BG_SKY
 	else:
 		environment.background_mode = Environment.BG_CLEAR_COLOR
-	if overlay:
+	if overlay or passthrough:
 		get_viewport().transparent_bg = not show
 
 
@@ -1651,7 +1672,16 @@ func _selftest() -> void:
 	check.call("the Goggles home environment is shown", home_sky != null and world_env.environment.background_mode == Environment.BG_SKY, "")
 	_on_setting("environment", "none")
 	check.call("and can be switched off", world_env.environment.background_mode == Environment.BG_CLEAR_COLOR, "")
+	ui._passthrough_toggle.button_pressed = true             # Quick Settings
+	check.call("Quick Settings turns passthrough on", prefs.get("environment") == "passthrough" and ui.choice("environment") == "passthrough", str(prefs.get("environment")))
+	ui._passthrough_toggle.button_pressed = false
+	check.call("and off again, back to what was chosen", prefs.get("environment") == "goggles", str(prefs.get("environment")))
+	_on_setting("environment", "passthrough")
+	check.call("Passthrough leaves the background see-through", home_sky == null and passthrough and get_viewport().transparent_bg \
+			and world_env.environment.background_color.a == 0.0, "")
 	_on_setting("environment", "goggles")
+	check.call("and switching back makes it solid again", not passthrough and world_env.environment.background_mode == Environment.BG_SKY \
+			and (overlay or not get_viewport().transparent_bg), "")
 
 	# Desktop view: the panel starts the picture taker (here drawing a test pattern) and shows it
 	var helper := OS.get_environment("GOGGLESXR_DESKTOP_GRAB")
