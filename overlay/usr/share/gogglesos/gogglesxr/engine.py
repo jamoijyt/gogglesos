@@ -9,12 +9,15 @@ Engines:
   wivrn        WiVRn (Monado-based), installed as the io.github.wivrn.wivrn Flatpak
   goggleslink  Goggles Link: GogglesXR's own streaming (a fork of WiVRn), installed in /opt/goggles-link
 """
+import glob
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import time
 
 HOME = os.path.expanduser("~")
 CONFIG = os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config")
@@ -233,8 +236,49 @@ class Engine:
         return ""
 
     def quit(self):
-        """Stop the running server (used when switching engines)."""
+        """Ask the running server to stop (used when switching engines)."""
         return False
+
+    def server_pids(self):
+        """This user's running streaming servers."""
+        pids = []
+        for comm in glob.glob("/proc/[0-9]*/comm"):
+            try:
+                with open(comm, encoding="utf-8") as f:
+                    if f.read().strip() != "wivrn-server":
+                        continue
+                if os.stat(comm).st_uid == os.getuid():
+                    pids.append(int(comm.split("/")[2]))
+            except (OSError, ValueError):
+                continue
+        return pids
+
+    def stop_server(self, patience=6.0):
+        """Stop the streaming server: ask it, then insist. True if it is no longer running."""
+        self.quit()
+        deadline = time.monotonic() + patience
+        while self.server_pids() and time.monotonic() < deadline:
+            time.sleep(0.2)
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            pids = self.server_pids()
+            if not pids:
+                return True
+            for pid in pids:
+                try:
+                    os.kill(pid, sig)
+                except OSError:
+                    pass
+            time.sleep(1.0)
+        return not self.server_pids()
+
+    def wait_running(self, seconds=15.0):
+        """Wait until the server answers on D-Bus. True if it does."""
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if self.running():
+                return True
+            time.sleep(0.5)
+        return self.running()
 
     def headset(self):
         """The connected headset and the link to it:
@@ -429,7 +473,10 @@ class WiVRn(Engine):
         if not info["connected"]:
             return info
         name = str(props.get("SystemName") or "")
-        info["name"] = name[:-len(" on WiVRn")] if name.endswith(" on WiVRn") else name
+        for suffix in (" on WiVRn", " on Goggles Link"):
+            if name.endswith(suffix):
+                name = name[:-len(suffix)]
+        info["name"] = name
         rate = props.get("PreferredRefreshRate")
         info["refresh_rate"] = float(rate) if isinstance(rate, (int, float)) and rate > 0 else None
         info["refresh_rates"] = [float(r) for r in props.get("AvailableRefreshRates") or [] if isinstance(r, (int, float))]
