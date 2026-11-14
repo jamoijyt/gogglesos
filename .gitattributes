@@ -10,3 +10,4 @@
 *.so binary
 *.jpg binary
 gogglesxr/desktop-grab/gogglesxr-desktop-grab binary
+gogglesxr/desktop-grab/gogglesxr-desktop-input binary

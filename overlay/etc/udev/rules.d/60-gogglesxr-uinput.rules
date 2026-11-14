@@ -1,0 +1,4 @@
+# Goggles OS: let the logged-in user create virtual input devices, so the GogglesXR dashboard
+# can use the PC's mouse and keyboard from inside the headset (gogglesxr-desktop-input).
+# Steam's own rules (steam-devices) do the same for its controller support.
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"

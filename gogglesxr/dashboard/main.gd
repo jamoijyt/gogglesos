@@ -22,6 +22,10 @@ const DashboardUI := preload("res://dashboard_ui.gd")
 const SteamLibrary := preload("res://steam_library.gd")
 const ControllerModels := preload("res://controller_models.gd")
 const DesktopView := preload("res://desktop_view.gd")
+const DesktopScreen := preload("res://desktop_screen.gd")
+const DesktopInput := preload("res://desktop_input.gd")
+const Keyboard := preload("res://keyboard.gd")
+const KEYBOARD_WIDTH := 1.05              # metres
 const HOME_IMAGE := "res://environments/goggles-home.jpg"
 const BIG_SCREEN_WIDTH := 3.0             # metres
 const BIG_SCREEN_DISTANCE := 3.2
@@ -79,8 +83,15 @@ var headset_thread: Thread
 var headset_wait := 0.0
 var desktop: DesktopView
 var desktop_panel_wanted := false
-var big_screen: MeshInstance3D
-var big_on := false
+var screens: Array = []                  # floating desktop screens (DesktopScreen), one per monitor
+var screen_grab: Node3D                   # the screen being carried, or null
+var desktop_input: DesktopInput           # the PC's mouse and keyboard
+var keyboard_view: SubViewport            # the virtual keyboard: drawn here...
+var keyboard_ui: Keyboard
+var keyboard_quad: MeshInstance3D         # ...and shown on this
+var keyboard_for: Node3D                  # the screen it sits under, or null for the dashboard
+var keyboard_pointer := Vector2(-1, -1)
+var wheel_wait := 0.0
 
 
 func _ready() -> void:
@@ -99,14 +110,18 @@ func _ready() -> void:
 	ui.quit_requested.connect(func(): ui.say("Closing the game…"); _run_tool("quit-game"))
 	ui.smoothing_changed.connect(func(v): smoothing = v; _save_prefs())
 	ui.setting_changed.connect(_on_setting)
-	ui.big_screen_toggled.connect(_set_big_screen)
+	ui.big_screen_toggled.connect(_pop_out_screens)
+	ui.keyboard_requested.connect(func(): _show_keyboard(null, not keyboard_quad.visible or keyboard_for != null))
+	desktop_input = DesktopInput.new()
+	add_child(desktop_input)
+	desktop_input.changed.connect(func(): if desktop_input.message != "": ui.say(desktop_input.message))
 	desktop = DesktopView.new()
 	add_child(desktop)
 	desktop.changed.connect(_desktop_changed)
 	_load_prefs()
 	ui.set_smoothing(smoothing)
 	ui.apply_settings(prefs)
-	desktop.set_options(str(prefs.get("desktop_screen", "all")), int(prefs.get("desktop_fps", 15)))
+	_apply_desktop_options()
 	ui.scale_changed.connect(func(f): size_factor = f; _apply_screen(); _save_place())
 
 	var origin := XROrigin3D.new()
@@ -170,7 +185,7 @@ func _ready() -> void:
 		_reset_place()
 	_apply_screen()
 	_load_home()
-	_make_big_screen()
+	_make_keyboard()
 	_debug_hooks()
 
 
@@ -272,7 +287,7 @@ func _on_setting(key: String, value: Variant) -> void:
 		"environment":
 			_load_home()
 		"desktop_screen", "desktop_fps":
-			desktop.set_options(str(prefs.get("desktop_screen", "all")), int(prefs.get("desktop_fps", 15)))
+			_apply_desktop_options()
 
 
 func _save_setting(key: String, value: Variant) -> void:
@@ -381,50 +396,222 @@ func _update_home(force := false) -> void:
 # ------------------------------------------------------------------ desktop view
 func _desktop_changed() -> void:
 	ui.set_desktop(desktop.texture, desktop.message)
-	if big_screen:
-		var material := big_screen.material_override as StandardMaterial3D
-		material.albedo_texture = desktop.texture
-		if desktop.texture:
-			var size := desktop.texture.get_size()
-			(big_screen.mesh as QuadMesh).size = Vector2(BIG_SCREEN_WIDTH, BIG_SCREEN_WIDTH * size.y / maxf(size.x, 1.0))
-		big_screen.visible = big_on and desktop.texture != null
+	for screen in screens:
+		screen.set_texture(desktop.texture)
+		screen.visible = desktop.texture != null
 
 
-## The Desktop panel wants pictures while it is in view; the big screen whenever it is on.
+## The Desktop panel wants pictures while it is in view; the floating screens while they exist.
 func _update_desktop() -> void:
 	var wanted := shown and open_amount > 0.5 and ui.current == "desktop" and not ui.is_swiping()
 	if wanted != desktop_panel_wanted:
 		desktop_panel_wanted = wanted
 		desktop.want("panel", wanted)
+	# Nothing to control: let go of the PC's mouse and keyboard
+	if desktop_input.running() and screens.is_empty() and not wanted and not keyboard_quad.visible:
+		desktop_input.stop()
 
 
-func _make_big_screen() -> void:
-	big_screen = MeshInstance3D.new()
+## The PC's monitors, as parts of the desktop picture: [{"name", "region": Rect2 in 0..1}].
+## From kscreen-doctor (Plasma's display settings); one entry for the whole desktop if that
+## doesn't answer.
+func _monitors() -> Array:
+	var text := OS.get_environment("GOGGLESXR_MONITORS")
+	var found := []
+	if text == "":
+		var out := []
+		if OS.execute("kscreen-doctor", ["-j"], out) == 0 and not out.is_empty():
+			text = str(out[0])
+	var data: Variant = JSON.parse_string(text) if text.strip_edges().begins_with("{") or text.strip_edges().begins_with("[") else null
+	var outputs: Array = data if data is Array else (data.get("outputs", []) if data is Dictionary else [])
+	for o in outputs:
+		if not o is Dictionary or not o.get("enabled", true) or not o.get("connected", true):
+			continue
+		var rect := Rect2()
+		if o.has("w"):                    # the test format: {"name", "x", "y", "w", "h"}
+			rect = Rect2(float(o.x), float(o.y), float(o.w), float(o.h))
+		elif o.get("pos") is Dictionary and o.get("size") is Dictionary:
+			var scale := maxf(float(o.get("scale", 1.0)), 0.1)
+			var w := float(o.size.get("width", 0)) / scale
+			var h := float(o.size.get("height", 0)) / scale
+			if int(o.get("rotation", 1)) in [2, 8]:      # turned sideways
+				var t := w
+				w = h
+				h = t
+			rect = Rect2(float(o.pos.get("x", 0)), float(o.pos.get("y", 0)), w, h)
+		if rect.size.x > 0 and rect.size.y > 0:
+			found.append({"name": str(o.get("name", "Screen")), "rect": rect})
+	if found.size() < 2:
+		return [{"name": "Desktop", "region": Rect2(0, 0, 1, 1)}]
+	var bounds: Rect2 = found[0].rect
+	for m in found:
+		bounds = bounds.merge(m.rect)
+	found.sort_custom(func(a, b): return a.rect.position.x < b.rect.position.x)
+	var result := []
+	for m in found:
+		var r: Rect2 = m.rect
+		result.append({"name": m.name, "region": Rect2((r.position - bounds.position) / bounds.size, r.size / bounds.size)})
+	return result
+
+
+## Floating screens need the whole desktop (they crop their monitor out of it); the panel shows
+## what the settings say.
+func _apply_desktop_options() -> void:
+	var which := "all" if not screens.is_empty() else str(prefs.get("desktop_screen", "all"))
+	desktop.set_options(which, int(prefs.get("desktop_fps", 30)))
+
+
+## Pop the desktop out into floating screens (one per monitor), or put them away.
+func _pop_out_screens(on: bool) -> void:
+	for screen in screens:
+		screen.queue_free()
+	screens.clear()
+	screen_grab = null
+	if keyboard_for != null:
+		_show_keyboard(null, false)
+	desktop.want("screens", on)
+	ui.set_big_screen(on)
+	desktop.set_max_width(3840 if on else 1920)       # sharp enough to read on a big screen
+	if not on:
+		_apply_desktop_options()
+		return
+	var monitors := _monitors()
+	var saved := _load_screens()
+	var head := camera.global_transform
+	var forward := -head.basis.z
+	forward.y = 0
+	forward = forward.normalized() if forward.length() > 0.01 else Vector3.FORWARD
+	var spread := deg_to_rad(38.0)
+	for i in monitors.size():
+		var floating := DesktopScreen.new(monitors[i].name, monitors[i].region)
+		add_child(floating)
+		screens.append(floating)
+		# one screen: big; several: side by side without overlapping
+		floating.width = BIG_SCREEN_WIDTH if monitors.size() == 1 else 2.0 * BIG_SCREEN_DISTANCE * tan(spread / 2.0) * 0.92
+		floating.set_texture(desktop.texture)
+		floating.visible = desktop.texture != null
+		if saved.size() == monitors.size():
+			floating.load_state(saved[i])
+		else:                             # side by side in an arc in front of you
+			var turn := (i - (monitors.size() - 1) / 2.0) * spread
+			floating.place(head.origin, forward.rotated(Vector3.UP, -turn), BIG_SCREEN_DISTANCE, 0.35)
+	_apply_desktop_options()
+	ui.say("Point at a screen to use the PC. Grip moves it; the stick pushes it away or brings it closer.")
+
+
+func _save_screens() -> void:
+	var file := ConfigFile.new()
+	file.load(SETTINGS_FILE)
+	file.set_value("desktop", "screens", screens.map(func(s): return s.save_state()))
+	file.save(SETTINGS_FILE)
+
+
+func _load_screens() -> Array:
+	var file := ConfigFile.new()
+	if file.load(SETTINGS_FILE) != OK:
+		return []
+	var saved: Variant = file.get_value("desktop", "screens", [])
+	return saved if saved is Array else []
+
+
+# ------------------------------------------------------------------ virtual keyboard
+func _make_keyboard() -> void:
+	keyboard_view = SubViewport.new()
+	keyboard_view.size = Vector2i(Keyboard.SIZE)
+	keyboard_view.transparent_bg = true
+	keyboard_view.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE
+	add_child(keyboard_view)
+	keyboard_ui = Keyboard.new()
+	keyboard_view.add_child(keyboard_ui)
+	keyboard_ui.key.connect(func(code, down): desktop_input.key(code, down))
+	keyboard_ui.hide_requested.connect(func(): _show_keyboard(null, false))
+	keyboard_quad = MeshInstance3D.new()
 	var quad := QuadMesh.new()
-	quad.size = Vector2(BIG_SCREEN_WIDTH, BIG_SCREEN_WIDTH * 9.0 / 16.0)
-	big_screen.mesh = quad
+	quad.size = Vector2(KEYBOARD_WIDTH, KEYBOARD_WIDTH * Keyboard.SIZE.y / Keyboard.SIZE.x)
+	keyboard_quad.mesh = quad
 	var material := StandardMaterial3D.new()
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	big_screen.material_override = material
-	big_screen.visible = false
-	add_child(big_screen)
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.albedo_texture = keyboard_view.get_texture()
+	keyboard_quad.material_override = material
+	keyboard_quad.visible = false
+	add_child(keyboard_quad)
 
 
-## A large copy of the desktop, standing further away in the direction you face.
-func _set_big_screen(on: bool) -> void:
-	big_on = on
-	desktop.want("big", on)
-	ui.set_big_screen(on)
-	if on:
-		var head := camera.global_transform
-		var forward := -head.basis.z
-		forward.y = 0
-		forward = forward.normalized() if forward.length() > 0.01 else Vector3.FORWARD
-		var at := head.origin + forward * BIG_SCREEN_DISTANCE + Vector3.UP * 0.35
-		big_screen.global_transform = Transform3D(Basis.looking_at(forward, Vector3.UP), at)   # its face towards you
-		ui.say("Big screen on: it stays while you play. Turn it off on the Desktop panel.")
-	big_screen.visible = on and desktop.texture != null
+## Show the keyboard under a screen (or under the dashboard, for null), or hide it.
+func _show_keyboard(under: Node3D, on: bool) -> void:
+	keyboard_for = under
+	keyboard_quad.visible = on
+	keyboard_view.render_target_update_mode = SubViewport.UPDATE_ALWAYS if on else SubViewport.UPDATE_WHEN_VISIBLE
+	if not on:
+		keyboard_ui.clear()
+		desktop_input.release_all()
+		return
+	desktop_input.start()
+	_place_keyboard()
+
+
+## Below what it types into, tilted up towards you like a real keyboard.
+func _place_keyboard() -> void:
+	var anchor: Vector3
+	var drop: float
+	if keyboard_for != null:
+		anchor = keyboard_for.global_position
+		drop = keyboard_for.width * keyboard_for.aspect / 2.0 + DesktopScreen.BAR_HEIGHT + 0.22
+	else:
+		anchor = screen.global_position
+		drop = screen.global_transform.basis.y.length() * (screen.mesh as QuadMesh).size.y / 2.0 + 0.18
+	var to_anchor := anchor - _head()
+	to_anchor.y = 0
+	var forward := to_anchor.normalized() if to_anchor.length() > 0.05 else Vector3.FORWARD
+	# closer than what it types into, and no further than arm's reach
+	var reach := clampf(to_anchor.length() * 0.55, 0.45, 0.75)
+	var at := _head() + forward * reach
+	at.y = minf(anchor.y - drop, _head().y - 0.35)
+	var basis := Basis.looking_at(forward, Vector3.UP).rotated(Basis.looking_at(forward, Vector3.UP).x, deg_to_rad(-35))
+	keyboard_quad.global_transform = Transform3D(basis, at)
+
+
+## Where a ray hits the keyboard, in its pixels, or null.
+func _keyboard_pixels(from: Vector3, direction: Vector3) -> Variant:
+	if not keyboard_quad.visible:
+		return null
+	var plane := Plane(keyboard_quad.global_transform.basis.z.normalized(), keyboard_quad.global_position)
+	var hit: Variant = plane.intersects_ray(from, direction)
+	if hit == null:
+		return null
+	var local: Vector3 = keyboard_quad.global_transform.affine_inverse() * hit
+	var half: Vector2 = (keyboard_quad.mesh as QuadMesh).size / 2.0
+	if absf(local.x) > half.x or absf(local.y) > half.y:
+		return null
+	return Vector2((local.x / half.x + 1.0) / 2.0, (1.0 - local.y / half.y) / 2.0) * Keyboard.SIZE
+
+
+func _keyboard_world(at: Vector2) -> Vector3:
+	var half: Vector2 = (keyboard_quad.mesh as QuadMesh).size / 2.0
+	var uv := at / Keyboard.SIZE
+	return keyboard_quad.global_transform * Vector3((uv.x * 2.0 - 1.0) * half.x, (1.0 - uv.y * 2.0) * half.y, 0.002)
+
+
+func _keyboard_motion(at: Vector2) -> void:
+	var event := InputEventMouseMotion.new()
+	event.position = at
+	event.global_position = at
+	event.relative = at - keyboard_pointer if keyboard_pointer.x >= 0 else Vector2.ZERO
+	keyboard_pointer = at
+	keyboard_view.push_input(event, true)
+
+
+func _keyboard_button(pressed: bool) -> void:
+	if keyboard_pointer.x < 0:
+		return
+	var event := InputEventMouseButton.new()
+	event.position = keyboard_pointer
+	event.global_position = keyboard_pointer
+	event.button_index = MOUSE_BUTTON_LEFT
+	event.pressed = pressed
+	event.button_mask = MOUSE_BUTTON_MASK_LEFT if pressed else 0
+	keyboard_view.push_input(event, true)
 
 
 # ------------------------------------------------------------------ running game
@@ -967,60 +1154,185 @@ func _process(delta: float) -> void:
 		menu_was_down = menu
 		if not shown:
 			return
+	wheel_wait = maxf(0.0, wheel_wait - delta)
 	for side in hands:
 		var hand: Dictionary = hands[side]
 		var controller: XRController3D = hand.controller
 		var tracked := controller.get_has_tracking_data()
 		var trigger := tracked and controller.get_float(&"trigger") > 0.6
 		var grip := tracked and controller.get_float(&"grip") > 0.6
+		var right_click := tracked and controller.is_button_pressed(&"by_button")
 		# Whichever hand pressed something last does the pointing
 		if (trigger and not hand.trigger) or (grip and not hand.grip):
-			if side != active_hand and not ui.is_swiping() and mouse_buttons == 0:
+			if side != active_hand and not ui.is_swiping() and mouse_buttons == 0 and screen_grab == null:
 				active_hand = side
 		var aim := controller.global_transform
 		if tracked:
 			_smooth_ray(hand, aim.origin, -aim.basis.z, delta)
 		else:
 			hand.dir = Vector3.ZERO
-		var hit: Variant = _ray_to_pixels(hand.from, hand.dir) if tracked else null
-		var length := LASER_LENGTH
-		if hit != null:
-			length = hand.from.distance_to(_pixels_to_world(hit))
+		var target: Dictionary = _aim(hand.from, hand.dir) if tracked else {}
+		var length: float = target.get("distance", LASER_LENGTH)
 		hand.laser.visible = tracked
 		if tracked:
 			var up := Vector3.UP if absf(hand.dir.dot(Vector3.UP)) < 0.98 else Vector3.FORWARD
 			# Stretch the beam along its own length (not along the room's axes, which twists it)
 			hand.laser.global_transform = Transform3D(Basis.looking_at(hand.dir, up) * Basis.from_scale(Vector3(1, 1, length)), hand.from + hand.dir * length / 2.0)
-		hand.dot.visible = hit != null
-		if hit != null:
-			hand.dot.global_position = _pixels_to_world(hit)
-
+		hand.dot.visible = not target.is_empty()
+		if not target.is_empty():
+			hand.dot.global_position = target.point
 		if side == active_hand:
 			ray_from = hand.from
 			ray_dir = hand.dir
-			var stick := controller.get_vector2(&"primary")
-			if moving:
-				_move_update(stick.y, delta)
-			else:
-				if hit != null:
-					_send_motion(hit)
-					if ui.is_swiping():
-						ui.swipe_move(hit - grab_start)
-				if trigger != hand.trigger and not ui.is_swiping():
-					_send_button(MOUSE_BUTTON_LEFT, trigger)
-				if absf(stick.y) > 0.5 and scroll_wait == 0.0 and hit != null:
-					_scroll(stick.y)
-					scroll_wait = 0.12
-			if grip != hand.grip:
-				_grip(grip)
+			_drive(hand, controller, target, trigger, grip, right_click, delta)
 		hand.trigger = trigger
 		hand.grip = grip
+		hand.right_click = right_click
+
+
+## What a ray points at, nearest first: {} for nothing, else {"kind", "distance", "point", ...}.
+## kind is "dashboard" (with "pixels"), "desktop" (a desktop picture: "uv", and "screen" or
+## null for the Desktop panel), "bar" / "keyboard_button" / "close" (a screen's handle bar,
+## with "screen") or "keyboard" (with "pixels").
+func _aim(from: Vector3, dir: Vector3) -> Dictionary:
+	var best := {}
+	if screen.visible and open_amount > 0.5:
+		var pixels: Variant = _ray_to_pixels(from, dir)
+		if pixels != null:
+			var point := _pixels_to_world(pixels)
+			best = {"kind": "dashboard", "distance": from.distance_to(point), "point": point, "pixels": pixels}
+			var uv: Variant = ui.desktop_uv(pixels) if ui.current == "desktop" and not ui.is_swiping() and desktop.screen == "all" else null
+			if uv != null:
+				best.merge({"kind": "desktop", "uv": uv, "screen": null}, true)
+	for s in screens:
+		var hit: Dictionary = s.hit(from, dir)
+		if hit.is_empty() or (not best.is_empty() and hit.distance >= best.distance):
+			continue
+		var kinds := {"screen": "desktop", "bar": "bar", "keyboard": "keyboard_button", "close": "close"}
+		best = {"kind": kinds[hit.part], "distance": hit.distance, "point": hit.point, "uv": hit.uv, "screen": s}
+	var keys: Variant = _keyboard_pixels(from, dir)
+	if keys != null:
+		var point := _keyboard_world(keys)
+		if best.is_empty() or from.distance_to(point) < best.distance:
+			best = {"kind": "keyboard", "distance": from.distance_to(point), "point": point, "pixels": keys}
+	return best
+
+
+## The active hand's buttons, applied to whatever it points at.
+func _drive(hand: Dictionary, controller: XRController3D, target: Dictionary, trigger: bool, grip: bool, right_click: bool, delta: float) -> void:
+	var stick := controller.get_vector2(&"primary")
+	var kind: String = target.get("kind", "")
+	var parts := {"desktop": "screen", "bar": "bar", "keyboard_button": "keyboard", "close": "close"}
+	for s in screens:
+		s.set_hovered(parts.get(kind, "") if target.get("screen") == s else ("bar" if s == screen_grab else ""))
+
+	# Carrying the dashboard or a screen: nothing else happens until grip is let go
+	if moving:
+		_move_update(stick.y, delta)
+		if not grip:
+			_grip(false)
+		return
+	if screen_grab != null:
+		screen_grab.update_grab(hand.from, hand.dir, _head(), stick.y, stick.x, delta)
+		if keyboard_for == screen_grab:
+			_place_keyboard()
+		if not grip:
+			screen_grab = null
+			_save_screens()
+		return
+	if ui.is_swiping():
+		if target.has("pixels") and kind in ["dashboard", "desktop"] and target.get("screen") == null:
+			_send_motion(target.pixels)
+			ui.swipe_move(target.pixels - grab_start)
+		if not grip:
+			_grip(false)
+		return
+
+	# Trigger let go: whoever got the press gets the release
+	if not trigger and hand.trigger:
+		match hand.get("press", ""):
+			"dashboard": _send_button(MOUSE_BUTTON_LEFT, false)
+			"desktop": desktop_input.button(0, false)
+			"keyboard": _keyboard_button(false)
+		hand.press = ""
+	if not right_click and hand.get("right_click", false):
+		desktop_input.button(1, false)
+	var pressed: bool = trigger and not hand.trigger
+	var gripped: bool = grip and not hand.grip
+
+	match kind:
+		"dashboard":
+			_send_motion(target.pixels)
+			if pressed:
+				_send_button(MOUSE_BUTTON_LEFT, true)
+				hand.press = "dashboard"
+			if absf(stick.y) > 0.5 and scroll_wait == 0.0:
+				_scroll(stick.y)
+				scroll_wait = 0.12
+			if gripped:
+				_grip(true)
+		"desktop":
+			var where: Vector2 = target.uv if target.screen == null else target.screen.desktop_point(target.uv)
+			if target.screen == null:
+				_send_motion(target.pixels)
+			desktop_input.move(where)
+			if pressed:
+				desktop_input.button(0, true)
+				hand.press = "desktop"
+			if right_click and not hand.get("right_click", false):
+				desktop_input.button(1, true)
+			if absf(stick.y) > 0.5 and wheel_wait == 0.0:
+				desktop_input.wheel(1 if stick.y > 0 else -1)
+				wheel_wait = 0.09
+			if gripped:
+				if target.screen != null:
+					screen_grab = target.screen
+					screen_grab.begin_grab(hand.from, target.point)
+				else:
+					_grip(true)               # the Desktop panel: swipe or move the dashboard
+		"bar":
+			if gripped or pressed:
+				screen_grab = target.screen
+				screen_grab.begin_grab(hand.from, target.point)
+		"keyboard_button":
+			if pressed:
+				_show_keyboard(target.screen, not (keyboard_quad.visible and keyboard_for == target.screen))
+		"close":
+			if pressed:
+				_close_screen(target.screen)
+		"keyboard":
+			_keyboard_motion(target.pixels)
+			if pressed:
+				_keyboard_button(true)
+				hand.press = "keyboard"
+		_:
+			if pressed:
+				hand.press = ""
+
+
+func _close_screen(which: Node3D) -> void:
+	if keyboard_for == which:
+		_show_keyboard(null, false)
+	screens.erase(which)
+	which.queue_free()
+	if screens.is_empty():
+		_pop_out_screens(false)
+	else:
+		_save_screens()
 
 
 func _pixels_to_world(at: Vector2) -> Vector3:
 	var half: Vector2 = (screen.mesh as QuadMesh).size / 2.0
 	var uv := at / DashboardUI.SIZE
 	return screen.to_global(Vector3((uv.x * 2.0 - 1.0) * half.x, (1.0 - uv.y * 2.0) * half.y, 0.002))
+
+
+## Self-test: point a hand's laser at `at`, from a little in front of `facing` (a node whose
+## front is +Z), and say what it hits.
+func _test_aim(hand: Dictionary, at: Vector3, facing: Node3D) -> Dictionary:
+	hand.from = at + facing.global_transform.basis.z.normalized() * 0.6
+	hand.dir = (at - hand.from).normalized()
+	return _aim(hand.from, hand.dir)
 
 
 # ------------------------------------------------------------------ desktop preview input
@@ -1065,7 +1377,11 @@ func _unhandled_input(event: InputEvent) -> void:
 ## GOGGLESXR_TEST_BG=1           fill the background with a loud colour (to stand in for a game)
 ## GOGGLESXR_SHOW_MODELS=1       desktop preview: line up every controller model (right hands pressed)
 ## GOGGLESXR_RECENTRE=1          start the recentre countdown straight away
+## GOGGLESXR_POP_OUT=1           pop the desktop out into floating screens, with the keyboard
+##                               (=keyboard: just the keyboard, under the dashboard)
 ## GOGGLESXR_SELFTEST=1          drive the dashboard through its pointer code, print results, quit
+## GOGGLESXR_MONITORS=[{"name":"DP-1","x":0,"y":0,"w":1920,"h":1080}, ...]  pretend these are the PC's monitors
+## GOGGLESXR_DESKTOP_INPUT=path  the desktop control helper (with GOGGLESXR_DESKTOP_INPUT_PRINT=1: print, don't act)
 func _debug_hooks() -> void:
 	var start_panel := OS.get_environment("GOGGLESXR_PANEL")    # "settings:Recording" opens a section
 	if DashboardUI.POS.has(start_panel.get_slice(":", 0)):
@@ -1078,6 +1394,13 @@ func _debug_hooks() -> void:
 		RenderingServer.set_default_clear_color(Color(0.75, 0.1, 0.45))
 	if OS.get_environment("GOGGLESXR_RECENTRE") != "":
 		_recentre.call_deferred()         # after the dashboard's opening animation has started
+	if OS.get_environment("GOGGLESXR_POP_OUT") == "keyboard":
+		await get_tree().create_timer(0.5).timeout
+		_show_keyboard(null, true)
+	elif OS.get_environment("GOGGLESXR_POP_OUT") != "":
+		_pop_out_screens.call_deferred(true)
+		await get_tree().create_timer(0.5).timeout
+		_show_keyboard(screens[0] if not screens.is_empty() else null, true)
 	if OS.get_environment("GOGGLESXR_SELFTEST") != "":
 		_selftest.call_deferred()
 	elif OS.get_environment("GOGGLESXR_SHOT") != "":
@@ -1332,21 +1655,114 @@ func _selftest() -> void:
 
 	# Desktop view: the panel starts the picture taker (here drawing a test pattern) and shows it
 	var helper := OS.get_environment("GOGGLESXR_DESKTOP_GRAB")
-	if helper != "" and FileAccess.file_exists(helper):
+	var input_helper := OS.get_environment("GOGGLESXR_DESKTOP_INPUT")
+	if helper != "" and FileAccess.file_exists(helper) and FileAccess.file_exists(input_helper) \
+			and OS.get_environment("GOGGLESXR_DESKTOP_INPUT_PRINT") != "" and OS.get_environment("GOGGLESXR_MONITORS") != "":
 		_on_setting("desktop_screen", "all")
 		ui.show_panel("desktop", false)
 		await get_tree().create_timer(2.0).timeout
 		check.call("the Desktop panel shows the desktop live", desktop.running() and desktop.texture != null and desktop.message == "", desktop.message)
-		_set_big_screen(true)
-		check.call("Big screen shows a large copy", big_screen.visible and (big_screen.mesh as QuadMesh).size.x == BIG_SCREEN_WIDTH, "")
+		# Desktop control: the helper in --print mode reports the events it would send
+		var view_rect: Rect2 = ui._desktop_view.get_global_rect()
+		var middle := view_rect.get_center()
+		var uv: Variant = ui.desktop_uv(middle)
+		check.call("the panel's picture maps to the desktop", uv is Vector2 and (uv as Vector2).distance_to(Vector2(0.5, 0.5)) < 0.02, str(uv))
+		var right_hand: Dictionary = hands["right"]
+		var right_controller: XRController3D = right_hand.controller
+		var target := _test_aim(right_hand, _pixels_to_world(middle), screen)
+		check.call("the laser on the panel's picture aims at the desktop", target.get("kind") == "desktop" and target.get("screen") == null, str(target.get("kind")))
+		_drive(right_hand, right_controller, target, true, false, false, 0.016)
+		right_hand.trigger = true
+		_drive(right_hand, right_controller, target, false, false, false, 0.016)
+		right_hand.trigger = false
+		await get_tree().create_timer(0.5).timeout
+		var events := "\n".join(desktop_input.output())
+		check.call("trigger there clicks on the PC", events.contains("pointer type=3 code=0 value=3") and events.contains("pointer type=1 code=272 value=1") and events.contains("pointer type=1 code=272 value=0"), events.right(300))
+
+		# Pop out: one floating screen per monitor, each showing its part of the desktop
 		ui.show_panel("game", false)
+		var cfg := ConfigFile.new()
+		if cfg.load(SETTINGS_FILE) == OK and cfg.has_section_key("desktop", "screens"):
+			cfg.erase_section_key("desktop", "screens")           # start from the default arc
+			cfg.save(SETTINGS_FILE)
+		_pop_out_screens(true)
+		check.call("Pop out makes a screen per monitor", screens.size() == 2 and screens[1].region.is_equal_approx(Rect2(0.6, 0, 0.4, 0.8)), str(screens.map(func(x): return x.region)))
+		await get_tree().create_timer(0.6).timeout
+		check.call("the capture keeps running for the screens, at full width", desktop.running() and desktop.max_width == 3840, "")
+		var right_screen: Node3D = screens[1]
+		var spot: Vector3 = right_screen.global_transform * Vector3(right_screen.width * 0.25, 0, 0)   # 3/4 across it
+		target = _test_aim(right_hand, spot, right_screen)
+		check.call("the laser on a screen aims at it", target.get("kind") == "desktop" and target.get("screen") == right_screen, str(target.get("kind")))
+		var point: Vector2 = right_screen.desktop_point(target.get("uv", Vector2.ZERO))
+		check.call("and at the right spot of the whole desktop", point.distance_to(Vector2(0.9, 0.4)) < 0.02, str(point))
+		_drive(right_hand, right_controller, target, false, false, true, 0.016)
+		right_hand.right_click = true
+		_drive(right_hand, right_controller, target, false, false, false, 0.016)
+		right_hand.right_click = false
+		await get_tree().create_timer(0.4).timeout
+		events = "\n".join(desktop_input.output())
+		check.call("B/Y right-clicks", events.contains("pointer type=1 code=273 value=1") and events.contains("pointer type=1 code=273 value=0"), events.right(200))
+
+		# Carry a screen by its bar
+		var bar_spot: Vector3 = right_screen.bar.global_position
+		target = _test_aim(right_hand, bar_spot, right_screen)
+		check.call("the bar under a screen can be aimed at", target.get("kind") == "bar", str(target.get("kind")))
+		var before: Vector3 = right_screen.global_position
+		_drive(right_hand, right_controller, target, false, true, false, 0.016)
+		right_hand.grip = true
+		check.call("grip picks it up", screen_grab == right_screen, "")
+		right_hand.dir = (bar_spot + Vector3(0.6, 0.3, 0) - right_hand.from).normalized()
+		_drive(right_hand, right_controller, {}, false, true, false, 0.016)
+		_drive(right_hand, right_controller, {}, false, false, false, 0.016)
+		right_hand.grip = false
+		check.call("and it follows the laser, then stays", screen_grab == null and right_screen.global_position.distance_to(before) > 0.3, str(right_screen.global_position - before))
+		check.call("where it was put is remembered", _load_screens().size() == 2, "")
+
+		# The bar's Keyboard button opens the keyboard under the screen; typing reaches the PC
+		var kb_button: Vector3 = right_screen.buttons["keyboard"].global_position
+		target = _test_aim(right_hand, kb_button, right_screen)
+		_drive(right_hand, right_controller, target, true, false, false, 0.016)
+		right_hand.trigger = true
+		_drive(right_hand, right_controller, target, false, false, false, 0.016)
+		right_hand.trigger = false
+		check.call("the bar's Keyboard button opens the keyboard there", keyboard_quad.visible and keyboard_for == right_screen, str(target.get("kind")))
+		await get_tree().process_frame
+		var key_a: Button = keyboard_ui._buttons[30][0]
+		var key_at: Vector2 = key_a.get_global_rect().get_center()
+		var key_world := _keyboard_world(key_at)
+		target = _test_aim(right_hand, key_world, keyboard_quad)
+		check.call("the laser finds keys on the keyboard", target.get("kind") == "keyboard" and (target.pixels as Vector2).distance_to(key_at) < 2.0, str(target.get("pixels")))
+		_drive(right_hand, right_controller, target, true, false, false, 0.016)
+		right_hand.trigger = true
+		await get_tree().process_frame
+		_drive(right_hand, right_controller, target, false, false, false, 0.016)
+		right_hand.trigger = false
+		await get_tree().create_timer(0.4).timeout
+		events = "\n".join(desktop_input.output())
+		check.call("pressing a key types it on the PC", events.contains("keyboard type=1 code=30 value=1") and events.contains("keyboard type=1 code=30 value=0"), events.right(200))
+		keyboard_ui._toggle_modifier(42)
+		keyboard_ui._press(30)
+		keyboard_ui._release(30)
 		await get_tree().create_timer(0.3).timeout
-		check.call("it keeps running for the big screen", desktop.running(), "")
-		_set_big_screen(false)
-		await get_tree().create_timer(0.3).timeout
-		check.call("and stops when nothing shows it", not desktop.running() and not big_screen.visible, "")
+		events = "\n".join(desktop_input.output())
+		check.call("Shift applies to the next key only", events.contains("keyboard type=1 code=42 value=1") and keyboard_ui.modifiers.get(42, "") == "", events.right(200))
+
+		# Close one screen, then put the rest away
+		var close_at: Vector3 = screens[0].buttons["close"].global_position
+		target = _test_aim(right_hand, close_at, screens[0])
+		_drive(right_hand, right_controller, target, true, false, false, 0.016)
+		right_hand.trigger = true
+		_drive(right_hand, right_controller, {}, false, false, false, 0.016)
+		right_hand.trigger = false
+		check.call("a screen's Close button removes it", screens.size() == 1 and screens[0] == right_screen, str(target.get("kind")))
+		_pop_out_screens(false)
+		_show_keyboard(null, false)
+		await get_tree().create_timer(0.4).timeout
+		check.call("and the capture stops when nothing shows it", not desktop.running() and screens.is_empty(), "")
+		_update_desktop()
+		check.call("desktop control lets go of the PC too", not desktop_input.running(), "")
 	else:
-		print("SKIP desktop view: set GOGGLESXR_DESKTOP_GRAB to the built gogglesxr-desktop-grab")
+		print("SKIP desktop view: set GOGGLESXR_DESKTOP_GRAB and GOGGLESXR_DESKTOP_INPUT to the built helpers, GOGGLESXR_DESKTOP_INPUT_PRINT=1 and GOGGLESXR_MONITORS (see main.gd)")
 	if settings_before == "":
 		DirAccess.remove_absolute(_prefs_path())
 	else:

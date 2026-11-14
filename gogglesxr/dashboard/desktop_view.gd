@@ -20,7 +20,7 @@ const MESSAGES := {
 var texture: ImageTexture
 var message := ""
 var screen := "all"
-var fps := 15
+var fps := 30
 var max_width := 1920
 var _users := {}
 var _pid := -1
@@ -59,6 +59,16 @@ func set_options(new_screen: String, new_fps: int) -> void:
 		return
 	screen = new_screen
 	fps = new_fps
+	if _pid > 0:
+		stop()
+		start()
+
+
+## The widest picture to ask for: wider when floating screens make the desktop big.
+func set_max_width(width: int) -> void:
+	if width == max_width:
+		return
+	max_width = width
 	if _pid > 0:
 		stop()
 		start()
@@ -138,15 +148,17 @@ func _process(delta: float) -> void:
 
 
 ## Runs on a thread: the newest picture as an Image, or null.
+## Reads the pixels straight into one buffer (no extra copy: a 4K picture is 33 MB).
 static func _read(path: String) -> Variant:
-	var data := FileAccess.get_file_as_bytes(path)
-	if data.size() < 16 or data.slice(0, 4).get_string_from_ascii() != "GXDF":
+	var file := FileAccess.open(path, FileAccess.READ)   # the helper replaces the file whole
+	if file == null or file.get_length() < 16 or file.get_buffer(4).get_string_from_ascii() != "GXDF":
 		return null
-	var w := data.decode_u32(4)
-	var h := data.decode_u32(8)
-	if w == 0 or h == 0 or data.size() < 16 + w * h * 4:
+	var w := file.get_32()
+	var h := file.get_32()
+	file.get_32()
+	if w == 0 or h == 0 or w > 8192 or h > 8192 or file.get_length() < 16 + w * h * 4:
 		return null
-	return Image.create_from_data(w, h, false, Image.FORMAT_RGBA8, data.slice(16, 16 + w * h * 4))
+	return Image.create_from_data(w, h, false, Image.FORMAT_RGBA8, file.get_buffer(w * h * 4))
 
 
 func _show(image: Image) -> void:

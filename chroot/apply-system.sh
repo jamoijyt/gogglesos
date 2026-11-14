@@ -388,6 +388,12 @@ fi
 # answers programs listed in a desktop file (overlay: org.gogglesos.gogglesxr-desktop-grab.desktop)
 if [ -f "$G/gogglesxr/desktop-grab/gogglesxr-desktop-grab" ]; then
   install -D -m755 "$G/gogglesxr/desktop-grab/gogglesxr-desktop-grab" "/usr/libexec/$DISTRO_ID/gogglesxr-desktop-grab"
+  # ...and its mouse and keyboard (uinput; overlay: /etc/udev/rules.d/60-gogglesxr-uinput.rules)
+  install -D -m755 "$G/gogglesxr/desktop-grab/gogglesxr-desktop-input" "/usr/libexec/$DISTRO_ID/gogglesxr-desktop-input"
+  if [ "${APPLY_MODE:-build}" != build ]; then     # on a running system: use the new rule now
+    udevadm control --reload 2>/dev/null || true
+    udevadm trigger --subsystem-match=misc --sysname-match=uinput 2>/dev/null || true
+  fi
 else
   warn "GogglesXR desktop view missing"
 fi

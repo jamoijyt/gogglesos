@@ -19,7 +19,8 @@ signal quit_requested
 signal smoothing_changed(amount: float)
 signal scale_changed(factor: float)
 signal setting_changed(key: String, value: Variant)   # saved to settings.json by main.gd
-signal big_screen_toggled(on: bool)
+signal big_screen_toggled(on: bool)                  # pop the desktop out into floating screens
+signal keyboard_requested
 
 const SIZE := Vector2(1280, 860)
 const PANEL_SIZE := Vector2(1280, 736)
@@ -459,12 +460,16 @@ func _build_desktop(body: Control) -> void:
 	box.add_child(row)
 	for button in _choice_buttons("desktop_screen", [["all", "All screens"], ["active", "Active screen"]]):
 		row.add_child(button)
-	_big_button = _button("Big screen")
+	_big_button = _button("Pop out screens")
 	_big_button.toggle_mode = true
 	_big_button.theme_type_variation = &"Toggle"
 	_big_button.toggled.connect(func(on): big_screen_toggled.emit(on))
 	row.add_child(_big_button)
-	var note := _label("View only for now: use the PC's mouse and keyboard to control it.", &"Muted", true)
+	var keys := _button("Keyboard")
+	keys.theme_type_variation = &"Toggle"
+	keys.pressed.connect(func(): keyboard_requested.emit())
+	row.add_child(keys)
+	var note := _label("Point to move the PC's mouse, trigger clicks, B/Y right-clicks, the stick scrolls.", &"Muted", true)
 	note.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	note.size_flags_stretch_ratio = 1.6
 	note.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -477,6 +482,22 @@ func set_desktop(texture: Texture2D, message := "") -> void:
 	_desktop_note.visible = texture == null or message != ""
 	_desktop_note.text = message if message != "" else "Starting the desktop view…"
 	_desktop_view.modulate.a = 0.35 if message != "" else 1.0
+
+
+## The spot of the desktop picture (0..1) under a point of this interface, or null when the
+## point isn't on the picture.
+func desktop_uv(at: Vector2) -> Variant:
+	if _desktop_view == null or _desktop_view.texture == null or not _desktop_view.is_visible_in_tree():
+		return null
+	var rect := _desktop_view.get_global_rect()
+	var picture := _desktop_view.texture.get_size()
+	if picture.x <= 0 or picture.y <= 0 or rect.size.x <= 0 or rect.size.y <= 0:
+		return null
+	var fit := minf(rect.size.x / picture.x, rect.size.y / picture.y)     # KEEP_ASPECT_CENTERED
+	var drawn := Rect2(rect.position + (rect.size - picture * fit) / 2.0, picture * fit)
+	if not drawn.has_point(at):
+		return null
+	return (at - drawn.position) / drawn.size
 
 
 func set_big_screen(on: bool) -> void:
@@ -623,7 +644,7 @@ func _settings_home(page: Control) -> void:
 
 func _settings_desktop(page: Control) -> void:
 	_choice_row(page, "Screen", "desktop_screen", [["all", "All screens"], ["active", "Active screen"]])
-	_choice_row(page, "Frame rate", "desktop_fps", [[15, "15"], [10, "10"], [30, "30"]])
+	_choice_row(page, "Frame rate", "desktop_fps", [[30, "30"], [15, "15"], [60, "60"]])
 	page.add_child(_label("The Desktop panel (below Current Game) shows your PC's desktop. Big screen floats a large copy of it in front of you, also while a game runs. Higher frame rates use more of the PC's power.", &"Muted", true))
 
 

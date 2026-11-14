@@ -6,6 +6,7 @@
  *
  *   OUT        "GXDF", width, height, frame number (4 x 32-bit, little-endian), then
  *              width x height RGBA pixels. Replaced in one step (rename), never half-written.
+ *              Only written when the desktop has changed since the last picture.
  *   OUT.error  one line saying why there is no picture (deleted again once pictures arrive).
  *
  * KWin only answers programs that a desktop file lists for that interface: see
@@ -104,7 +105,48 @@ static void clear_report(void)
 /* Write a frame: `pixel(x, y, rgb)` gives the colour of source pixel x, y */
 typedef void (*pixel_fn)(const void *ctx, uint32_t x, uint32_t y, uint8_t *rgb);
 
-static int write_frame(uint32_t src_w, uint32_t src_h, uint32_t max_w, pixel_fn pixel, const void *ctx)
+/* The common case, done without a function call per pixel: 4 bytes per pixel in, RGBA out.
+ * `red` is the offset of the red byte (2 for Qt's ARGB32 family, 0 for RGBA8888). */
+typedef struct {
+	const uint8_t *data;
+	uint32_t stride;
+	int red;
+} image32;
+
+static void convert32(uint8_t *out, const image32 *im, uint32_t src_w, uint32_t src_h, uint32_t w, uint32_t h)
+{
+	const int r = im->red, b = 2 - im->red;
+	if (w == src_w && h == src_h) {
+		for (uint32_t y = 0; y < h; y++) {
+			const uint8_t *in = im->data + (size_t)y * im->stride;
+			for (uint32_t x = 0; x < w; x++, in += 4, out += 4) {
+				out[0] = in[r];
+				out[1] = in[1];
+				out[2] = in[b];
+				out[3] = 255;
+			}
+		}
+		return;
+	}
+	/* Smaller: average a 2x2 block around each sample point, so small text stays readable */
+	for (uint32_t y = 0; y < h; y++) {
+		uint32_t sy = (uint32_t)(((uint64_t)y * src_h) / h);
+		const uint8_t *row0 = im->data + (size_t)sy * im->stride;
+		const uint8_t *row1 = sy + 1 < src_h ? row0 + im->stride : row0;
+		for (uint32_t x = 0; x < w; x++, out += 4) {
+			uint32_t sx = (uint32_t)(((uint64_t)x * src_w) / w);
+			uint32_t sx2 = sx + 1 < src_w ? sx + 1 : sx;
+			const uint8_t *p0 = row0 + (size_t)sx * 4, *p1 = row0 + (size_t)sx2 * 4;
+			const uint8_t *p2 = row1 + (size_t)sx * 4, *p3 = row1 + (size_t)sx2 * 4;
+			out[0] = (uint8_t)((p0[r] + p1[r] + p2[r] + p3[r] + 2) / 4);
+			out[1] = (uint8_t)((p0[1] + p1[1] + p2[1] + p3[1] + 2) / 4);
+			out[2] = (uint8_t)((p0[b] + p1[b] + p2[b] + p3[b] + 2) / 4);
+			out[3] = 255;
+		}
+	}
+}
+
+static int write_frame(uint32_t src_w, uint32_t src_h, uint32_t max_w, pixel_fn pixel, const void *ctx, const image32 *fast)
 {
 	uint32_t w = src_w, h = src_h;
 	if (w > max_w) {
@@ -114,7 +156,13 @@ static int write_frame(uint32_t src_w, uint32_t src_h, uint32_t max_w, pixel_fn 
 	if (w == 0 || h == 0)
 		return -1;
 	size_t size = 16 + (size_t)w * h * 4;
-	uint8_t *buf = malloc(size);
+	static uint8_t *buf; /* kept between frames: no allocation per picture */
+	static size_t buf_size;
+	if (buf_size < size) {
+		free(buf);
+		buf = malloc(size);
+		buf_size = buf ? size : 0;
+	}
 	if (!buf)
 		return -1;
 	memcpy(buf, "GXDF", 4);
@@ -122,6 +170,9 @@ static int write_frame(uint32_t src_w, uint32_t src_h, uint32_t max_w, pixel_fn 
 	put_u32(buf + 8, h);
 	put_u32(buf + 12, ++frame_number);
 	uint8_t *px = buf + 16;
+	if (fast && fast->data) {
+		convert32(px, fast, src_w, src_h, w, h);
+	} else
 	for (uint32_t y = 0; y < h; y++) {
 		/* Average a 2x2 block around each sample point, so small text stays readable */
 		uint32_t sy = (uint32_t)(((uint64_t)y * src_h) / h);
@@ -143,10 +194,8 @@ static int write_frame(uint32_t src_w, uint32_t src_h, uint32_t max_w, pixel_fn 
 	char tmp[4096];
 	snprintf(tmp, sizeof tmp, "%s.part", out_path);
 	int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
-	if (fd < 0) {
-		free(buf);
+	if (fd < 0)
 		return -1;
-	}
 	size_t done = 0;
 	while (done < size) {
 		ssize_t n = write(fd, buf + done, size - done);
@@ -157,7 +206,6 @@ static int write_frame(uint32_t src_w, uint32_t src_h, uint32_t max_w, pixel_fn 
 		done += (size_t)n;
 	}
 	close(fd);
-	free(buf);
 	if (done != size || rename(tmp, out_path) != 0) {
 		unlink(tmp);
 		return -1;
@@ -312,11 +360,33 @@ static int grab(GDBusConnection *bus, const char *screen, uint32_t max_w)
 		if (r.size < (size_t)stride * (h - 1) + (size_t)w * bytes_per_pixel(format)) {
 			report("failed: the picture from KWin was cut short");
 		} else {
+			/* Nothing moved on the desktop since the last picture: nothing to send. This is
+			 * most frames while you aren't using the desktop, and saves the dashboard a
+			 * full-screen texture upload each time. */
+			static uint8_t *last;
+			static size_t last_size;
+			static uint32_t last_w, last_h, last_max_w;
+			size_t used = (size_t)stride * (h - 1) + (size_t)w * bytes_per_pixel(format);
+			if (last && last_size == used && last_w == w && last_h == h && last_max_w == max_w &&
+			    memcmp(last, r.data, used) == 0) {
+				free(r.data);
+				return 3;
+			}
 			image im = {.data = r.data, .stride = stride, .format = format};
-			if (write_frame(w, h, max_w, image_pixel, &im) == 0) {
+			image32 quick = {.data = bytes_per_pixel(format) == 4 ? r.data : NULL,
+			                 .stride = stride,
+			                 .red = (format == 4 || format == 5 || format == 6) ? 2 : 0};
+			if (write_frame(w, h, max_w, image_pixel, &im, &quick) == 0) {
 				status = 0;
 				if (frame_number == 1)
 					clear_report();
+				free(last); /* keep this picture to compare the next one with */
+				last = r.data;
+				last_size = used;
+				last_w = w;
+				last_h = h;
+				last_max_w = max_w;
+				return status;
 			}
 		}
 	}
@@ -383,27 +453,33 @@ int main(int argc, char **argv)
 			return 1;
 		}
 	}
-	int failures = 0;
+	int failures = 0, still = 0;
 	while (getppid() == parent) {
 		struct timespec start, end;
 		clock_gettime(CLOCK_MONOTONIC, &start);
 		int status;
 		if (test) {
 			unsigned t = frame_number;
-			status = write_frame(1280, 800, max_w, test_pixel, &t) == 0 ? 0 : 1;
+			status = write_frame(1280, 800, max_w, test_pixel, &t, NULL) == 0 ? 0 : 1;
 		} else {
 			status = grab(bus, screen, max_w);
 		}
 		if (status == 2)
 			return 1;
-		failures = status == 0 ? 0 : failures + 1;
+		failures = (status == 0 || status == 3) ? 0 : failures + 1;
+		still = status == 3 ? still + 1 : 0;
 		if (once)
-			return status;
+			return status == 3 ? 0 : status;
 		if (failures > 50) /* about ten seconds of nothing: something is wrong */
 			return 1;
 		clock_gettime(CLOCK_MONOTONIC, &end);
 		double spent = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
-		double wait = (status == 0 ? 1.0 / fps : 0.2) - spent;
+		/* While nothing changes, look less often (5 times a second after two still seconds):
+		 * asking KWin for a picture costs the desktop a little each time */
+		double period = 1.0 / fps;
+		if (still > fps * 2 && period < 0.2)
+			period = 0.2;
+		double wait = ((status == 0 || status == 3) ? period : 0.2) - spent;
 		if (wait > 0)
 			sleep_seconds(wait);
 	}

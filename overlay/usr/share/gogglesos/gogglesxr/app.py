@@ -33,7 +33,7 @@ AUTOSTART_USER = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(
                               "autostart", "gogglesxr.desktop")
 DEFAULTS = {"keep_ready": True, "auto_dashboard": True, "show_all_games": False, "animations": True,
             "pointer_smoothing": 60, "engine": "wivrn", "environment": "goggles", "environment_image": "",
-            "desktop_screen": "all", "desktop_fps": 15}
+            "desktop_screen": "all", "desktop_fps": 30}
 # Recording and screenshot options: (setting, label, [(value, label)], note). The values match
 # CAPTURE_CHOICES in the gogglesxr command, which reads them when a recording starts.
 CAPTURE_OPTIONS = [
@@ -760,10 +760,10 @@ class Window(QMainWindow):
         for key, text, choices, note in CAPTURE_OPTIONS:
             self.choice(f, text, choices, self.settings[key], lambda v, k=key: self.change(k, v), note)
 
-        f = group("Desktop view", "The dashboard's Desktop panel and big screen show this PC's desktop in the headset.")
+        f = group("Desktop view", "The dashboard's Desktop panel and floating screens show this PC's desktop in the headset, and let you use it with the controllers.")
         self.choice(f, "Screen", [("all", "All screens"), ("active", "The screen with the mouse")],
                     self.settings["desktop_screen"], lambda v: self.change("desktop_screen", v))
-        self.choice(f, "Frame rate", [(15, "15 fps"), (10, "10 fps (lighter)"), (30, "30 fps (smoother)")],
+        self.choice(f, "Frame rate", [(30, "30 fps"), (15, "15 fps (lighter)"), (60, "60 fps (smoothest, busier PC)")],
                     self.settings["desktop_fps"], lambda v: self.change("desktop_fps", v))
         inner_box.addStretch(1)
         return widget
