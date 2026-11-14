@@ -381,6 +381,8 @@ if [ -f "$G/gogglesxr/dashboard/project.godot" ]; then
   install -D -m755 -t "$XR_DASH/bin" "$G"/gogglesxr/dashboard/bin/*.so
   # The home environment: the 360-degree picture shown while no game is running
   install -D -m644 -t "$XR_DASH/environments" "$G"/gogglesxr/dashboard/environments/*.jpg
+  install -D -m644 -t "$XR_DASH/sounds" "$G"/gogglesxr/dashboard/sounds/*.wav "$G"/gogglesxr/dashboard/sounds/*.txt
+  install -D -m644 -t "$XR_DASH/fonts" "$G"/gogglesxr/dashboard/fonts/*.woff2 "$G"/gogglesxr/dashboard/fonts/*.txt
 else
   warn "GogglesXR dashboard sources missing"
 fi

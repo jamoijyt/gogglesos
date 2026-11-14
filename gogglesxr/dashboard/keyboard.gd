@@ -7,6 +7,7 @@ extends Control
 
 signal key(code: int, down: bool)
 signal hide_requested
+signal toggled_modifier(on: bool)
 
 const SIZE := Vector2(1280, 430)
 const ACCENT := Color("3ddc84")
@@ -100,6 +101,7 @@ func _make_key(text: String, shifted: String, code: int, width: float) -> Button
 func _toggle_modifier(code: int) -> void:
 	var now: String = modifiers.get(code, "")
 	modifiers[code] = "once" if now == "" else ("held" if now == "once" else "")
+	toggled_modifier.emit(modifiers[code] != "")
 	_refresh()
 
 

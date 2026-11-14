@@ -25,6 +25,7 @@ const DesktopView := preload("res://desktop_view.gd")
 const DesktopScreen := preload("res://desktop_screen.gd")
 const DesktopInput := preload("res://desktop_input.gd")
 const Keyboard := preload("res://keyboard.gd")
+const UISounds := preload("res://ui_sounds.gd")
 const KEYBOARD_WIDTH := 1.05              # metres
 const HOME_IMAGE := "res://environments/goggles-home.jpg"
 const BIG_SCREEN_WIDTH := 3.0             # metres
@@ -93,6 +94,7 @@ var keyboard_quad: MeshInstance3D         # ...and shown on this
 var keyboard_for: Node3D                  # the screen it sits under, or null for the dashboard
 var keyboard_pointer := Vector2(-1, -1)
 var wheel_wait := 0.0
+var sounds: UISounds
 
 
 func _ready() -> void:
@@ -102,7 +104,10 @@ func _ready() -> void:
 	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	viewport.gui_embed_subwindows = true
 	add_child(viewport)
+	sounds = UISounds.new()
+	add_child(sounds)
 	ui = DashboardUI.new()
+	ui.sounds = sounds
 	viewport.add_child(ui)
 	ui.recentre_requested.connect(_recentre)
 	ui.resume_requested.connect(func(): if overlay: _set_shown(false))
@@ -120,6 +125,8 @@ func _ready() -> void:
 	add_child(desktop)
 	desktop.changed.connect(_desktop_changed)
 	_load_prefs()
+	sounds.set_mode(str(prefs.get("ui_sounds", "on")))
+	ui.animate_ui = animations
 	ui.set_smoothing(smoothing)
 	ui.apply_settings(prefs)
 	_apply_desktop_options()
@@ -227,6 +234,7 @@ func _set_shown(on: bool) -> void:
 			hands[side].dot.visible = false
 	if open_tween:
 		open_tween.kill()
+	sounds.play("open", 1.0 if on else 0.8)
 	if not animations:
 		_set_open_amount(1.0 if on else 0.0)
 		return
@@ -239,6 +247,7 @@ func _set_shown(on: bool) -> void:
 func _set_open_amount(amount: float) -> void:
 	open_amount = amount
 	screen.visible = amount > 0.01
+	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS if screen.visible else SubViewport.UPDATE_DISABLED
 	(screen.material_override as StandardMaterial3D).albedo_color.a = clampf(amount, 0.0, 1.0)
 	_apply_screen()
 
@@ -289,6 +298,8 @@ func _on_setting(key: String, value: Variant) -> void:
 			_load_home()
 		"desktop_screen", "desktop_fps":
 			_apply_desktop_options()
+		"ui_sounds":
+			sounds.set_mode(str(value))
 
 
 func _save_setting(key: String, value: Variant) -> void:
@@ -544,7 +555,11 @@ func _make_keyboard() -> void:
 	add_child(keyboard_view)
 	keyboard_ui = Keyboard.new()
 	keyboard_view.add_child(keyboard_ui)
-	keyboard_ui.key.connect(func(code, down): desktop_input.key(code, down))
+	keyboard_ui.key.connect(func(code, down):
+		desktop_input.key(code, down)
+		if down and not code in Keyboard.MODIFIERS:
+			sounds.play("key"))
+	keyboard_ui.toggled_modifier.connect(func(on): sounds.play("toggle", 1.12 if on else 0.9))
 	keyboard_ui.hide_requested.connect(func(): _show_keyboard(null, false))
 	keyboard_quad = MeshInstance3D.new()
 	var quad := QuadMesh.new()
@@ -704,7 +719,8 @@ func _make_hand(origin: XROrigin3D, side: String) -> Dictionary:
 	laser.mesh = beam
 	var glow := StandardMaterial3D.new()
 	glow.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	glow.albedo_color = DashboardUI.ACCENT
+	glow.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	glow.albedo_color = Color(DashboardUI.ACCENT, 0.4)
 	laser.material_override = glow
 	laser.visible = false
 	add_child(laser)                      # placed along the smoothed pointing ray each frame
@@ -1136,6 +1152,8 @@ func _scroll(amount: float) -> void:
 ## Grip on a panel swipes it; grip on the status bar underneath moves the whole dashboard.
 func _grip(pressed: bool) -> void:
 	if not pressed:
+		if moving:
+			sounds.play("grab", 0.85)
 		ui.swipe_end()
 		_move_end()
 		return
@@ -1146,8 +1164,8 @@ func _grip(pressed: bool) -> void:
 	if pointer.y <= DashboardUI.PANEL_SIZE.y:
 		grab_start = pointer
 		ui.swipe_begin()
-	else:
-		_move_begin()
+	elif _move_begin():
+		sounds.play("grab", 1.1)
 
 
 # ------------------------------------------------------------------ headset input
@@ -1202,6 +1220,12 @@ func _process(delta: float) -> void:
 		hand.dot.visible = not target.is_empty()
 		if not target.is_empty():
 			hand.dot.global_position = target.point
+		# The beam brightens on something it can use; the dot shrinks while the trigger is held
+		var beam := hand.laser.material_override as StandardMaterial3D
+		var blend := 1.0 - pow(0.001, delta)
+		beam.albedo_color.a = lerpf(beam.albedo_color.a, 0.9 if not target.is_empty() else 0.4, blend)
+		var dot_size := 0.65 if trigger else 1.0
+		hand.dot.scale = hand.dot.scale.lerp(Vector3.ONE * dot_size, 1.0 - pow(0.0001, delta))
 		if side == active_hand:
 			ray_from = hand.from
 			ray_dir = hand.dir
@@ -1259,6 +1283,7 @@ func _drive(hand: Dictionary, controller: XRController3D, target: Dictionary, tr
 			_place_keyboard()
 		if not grip:
 			screen_grab = null
+			sounds.play("grab", 0.85)
 			_save_screens()
 		return
 	if ui.is_swiping():
@@ -1309,17 +1334,21 @@ func _drive(hand: Dictionary, controller: XRController3D, target: Dictionary, tr
 				if target.screen != null:
 					screen_grab = target.screen
 					screen_grab.begin_grab(hand.from, target.point)
+					sounds.play("grab", 1.1)
 				else:
 					_grip(true)               # the Desktop panel: swipe or move the dashboard
 		"bar":
 			if gripped or pressed:
 				screen_grab = target.screen
 				screen_grab.begin_grab(hand.from, target.point)
+				sounds.play("grab", 1.1)
 		"keyboard_button":
 			if pressed:
+				sounds.play("click")
 				_show_keyboard(target.screen, not (keyboard_quad.visible and keyboard_for == target.screen))
 		"close":
 			if pressed:
+				sounds.play("click", 0.9)
 				_close_screen(target.screen)
 		"keyboard":
 			_keyboard_motion(target.pixels)
@@ -1648,6 +1677,22 @@ func _selftest() -> void:
 	check.call("then recentres and says so", countdown_phase == "done" and countdown_text.text == "View recentred", countdown_phase + " / " + countdown_text.text)
 	await get_tree().create_timer(1.6).timeout
 	check.call("and the dashboard comes back", countdown_phase == "" and not countdown_root.visible and screen.visible, str(screen.visible))
+
+	# Interface sounds (Kenney's CC0 pack, sounds/)
+	check.call("the interface sounds load", sounds.loaded() == UISounds.LEVEL_DB.size(), str(sounds.loaded()))
+	sounds.played.clear()
+	var a_button: Button = ui.find_children("", "Button", true, false).filter(func(b): return b.text == "Screenshot")[0]
+	a_button.mouse_entered.emit()
+	a_button.pressed.emit()
+	check.call("buttons click and hum when pointed at", sounds.played.has("hover") and sounds.played.has("click"), str(sounds.played))
+	await get_tree().create_timer(0.3).timeout
+	check.call("and grow a little under the pointer", a_button.scale.x > 1.01 or not animations, str(a_button.scale))
+	a_button.mouse_exited.emit()
+	_on_setting("ui_sounds", "off")
+	sounds.played.clear()
+	a_button.pressed.emit()
+	check.call("Sounds: Off silences them", sounds.played.is_empty(), str(sounds.played))
+	_on_setting("ui_sounds", "on")
 
 	# Status strip: batteries and ping from the engine
 	ui.set_headset({"connected": true, "name": "Meta Quest 3", "engine_name": "WiVRn", "ping_ms": 4.4, "connection": "wifi",
