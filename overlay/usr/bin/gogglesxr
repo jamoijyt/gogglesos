@@ -433,6 +433,14 @@ def home(extra=()):
         if os.path.isdir(os.path.join(shared, folder)):
             shutil.copytree(os.path.join(shared, folder), os.path.join(project, folder), dirs_exist_ok=True,
                             ignore=shutil.ignore_patterns("*.py", "*.import"))
+    for script in ("steam_library.gd", "ui_sounds.gd"):     # the game list reader and the interface sounds
+        for name in (script, script + ".uid"):
+            if os.path.isfile(os.path.join(shared, name)):
+                shutil.copy2(os.path.join(shared, name), os.path.join(project, name))
+    try:                                   # games and cover art for the game shelf
+        load_library().write_dashboard_list(_show_all_games())
+    except Exception as e:
+        print(f"gogglesxr: couldn't prepare the game list ({e})", file=sys.stderr)
     godot = find_godot() or fetch_godot()
     if not godot:
         return 1
