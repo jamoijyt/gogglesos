@@ -725,8 +725,8 @@ func _settings_recording(page: Control) -> void:
 
 ## What you see around you when no game is running
 func _settings_home(page: Control) -> void:
-	_choice_row(page, "Surroundings", "environment", [["goggles", "Goggles night"], ["custom", "My picture"], ["passthrough", "Passthrough"], ["none", "Black"]])
-	page.add_child(_label("Shown around you while no game is running, and hidden as soon as a game starts. \"My picture\" uses a 360° photo you choose in the GogglesXR app on the desktop (VR settings > Home environment). \"Passthrough\" shows your room through the headset's cameras (Quest 2 and newer).", &"Muted", true))
+	_choice_row(page, "Surroundings", "environment", [["room", "Goggles Home"], ["goggles", "Night grid"], ["custom", "My picture"], ["passthrough", "Passthrough"], ["none", "Black"]])
+	page.add_child(_label("Around you while no game is running. Goggles Home is a room you stand in (it starts and stops with the headset; switching to or from it takes effect the next time the headset connects). The others are shown by the dashboard and hidden as soon as a game starts. \"My picture\" uses a 360° photo you choose in the GogglesXR app on the desktop (VR settings > Home environment). \"Passthrough\" shows your room through the headset's cameras (Quest 2 and newer).", &"Muted", true))
 
 
 func _settings_desktop(page: Control) -> void:

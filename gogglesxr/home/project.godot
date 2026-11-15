@@ -1,0 +1,27 @@
+; Goggles Home (Godot 4.4+): the room you stand in when no game is running.
+; Run with:  gogglesxr home   (it adds the files shared with the dashboard)
+config_version=5
+
+[application]
+
+config/name="Goggles Home"
+config/description="The home space of GogglesXR"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.4", "Forward Plus")
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=800
+
+[rendering]
+
+renderer/rendering_method="mobile"
+environment/defaults/default_clear_color=Color(0.012, 0.043, 0.039, 1)
+anti_aliasing/quality/msaa_3d=1
+
+[xr]
+
+openxr/enabled=true
+openxr/startup_alert=false
+shaders/enabled=true
