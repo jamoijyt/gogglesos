@@ -27,6 +27,9 @@ does the setup that otherwise has to be done by hand:
   gogglesxr pair      let a new headset pair with this PC (shows a PIN; --stop to end)
   gogglesxr server    start, stop or check the streaming server (start|stop|status)
   gogglesxr install-headset  install the Goggles Link app on the headset plugged in by USB
+  gogglesxr bitrate MBPS  change the stream's bitrate while it runs (Goggles Link 0.3.1+)
+  gogglesxr quiet     hold the desktop's notifications back until this command's input
+                      closes (the dashboard's Do not disturb)
   gogglesxr app       open the GogglesXR desktop app (--background: tray icon only)
   gogglesxr           open the desktop app (menu entry)
 """
@@ -1026,6 +1029,50 @@ def server_command(args):
     return 2
 
 
+def bitrate_command(args):
+    if not args:
+        info = load_engine().headset()
+        print(f"{info['bitrate_mbps']:g} Mb/s" if info.get("bitrate_mbps") else "No stream right now.")
+        return 0
+    ok, message = load_engine().set_bitrate(args[0])
+    print(message, file=sys.stdout if ok else sys.stderr)
+    return 0 if ok else 1
+
+
+def quiet_command(args):
+    """Do not disturb: ask Plasma's notification server to hold notifications back, and keep the
+    request for as long as this runs. It ends when standard input closes (the dashboard holds
+    it open while Do not disturb is on) or the process is stopped; Plasma drops the request by
+    itself when this process's bus connection goes away, so a crash can't leave it on."""
+    try:
+        from gi.repository import Gio, GLib
+    except ImportError:
+        print("error: needs python3-gi", flush=True)
+        return 1
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        reply = bus.call_sync("org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+                              "org.freedesktop.Notifications", "Inhibit",
+                              GLib.Variant("(ssa{sv})", ("gogglesxr", "You're in VR", {})),
+                              GLib.VariantType("(u)"), Gio.DBusCallFlags.NONE, 3000, None)
+    except Exception as e:                 # no notification server, or one without Inhibit
+        print(f"error: {e}", flush=True)
+        return 1
+    cookie = reply.unpack()[0]
+    print("quiet", flush=True)
+    try:
+        sys.stdin.read()                   # until the dashboard lets go
+    except (KeyboardInterrupt, OSError):
+        pass
+    try:
+        bus.call_sync("org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+                      "org.freedesktop.Notifications", "UnInhibit", GLib.Variant("(u)", (cookie,)),
+                      None, Gio.DBusCallFlags.NONE, 3000, None)
+    except Exception:
+        pass
+    return 0
+
+
 def install_headset_command(args):
     """Install the Goggles Link app on the headset plugged in by USB."""
     sys.path.insert(0, APP_DIR) if APP_DIR not in sys.path else None
@@ -1092,7 +1139,8 @@ def main():
                "quit-game": quit_game, "recenter": recenter, "recentre": recenter,
                "headset": lambda: headset_command(sys.argv[2:]), "pair": lambda: pair_command(sys.argv[2:]),
                "server": lambda: server_command(sys.argv[2:]),
-               "install-headset": lambda: install_headset_command(sys.argv[2:])}
+               "install-headset": lambda: install_headset_command(sys.argv[2:]),
+               "bitrate": lambda: bitrate_command(sys.argv[2:]), "quiet": lambda: quiet_command(sys.argv[2:])}
     if cmd not in actions:
         print(__doc__.strip(), file=sys.stderr)
         return 2

@@ -49,6 +49,17 @@ var shown := true                         # overlay mode: the menu button shows 
 var open_amount := 1.0                    # 0 = closed, 1 = open; animated when showing and hiding
 var open_tween: Tween
 var smoothing := 0.6                      # pointer smoothing, 0 (off) to 1 (strongest)
+var smoothing_on := true                  # Quick Settings > Smoothing
+# Quick Settings that change what you see or hear
+var view_dim: MeshInstance3D              # Brightness: a dark veil over the whole view
+var view_tint: MeshInstance3D             # Night tint: a warm one
+var boundary_node: MeshInstance3D         # Boundary: the play area drawn on the floor
+var stats_label: Label3D                  # Stats overlay: a few numbers in the corner of your view
+var stats_wait := 0.0
+var quiet_pipe: FileAccess                # Do not disturb: `gogglesxr quiet` runs while this is open
+var quiet_pid := -1
+var bitrate_wait := -1.0                  # seconds until a new bitrate is sent (waits for the slider to settle)
+var bitrate_thread: Thread
 var animations := true
 var game_thread: Thread                   # looks up the running game without holding up a frame
 var tool_jobs: Array[Thread] = []         # gogglesxr commands started from the dashboard
@@ -118,6 +129,7 @@ func _ready() -> void:
 	ui.record_requested.connect(func(): _run_tool("record"))
 	ui.quit_requested.connect(func(): ui.say("Closing the game…"); _run_tool("quit-game"))
 	ui.smoothing_changed.connect(func(v): smoothing = v; _save_prefs())
+	ui.quick_changed.connect(_on_quick)
 	ui.setting_changed.connect(_on_setting)
 	ui.big_screen_toggled.connect(_pop_out_screens)
 	ui.keyboard_requested.connect(func(): _show_keyboard(null, not keyboard_quad.visible or keyboard_for != null))
@@ -202,6 +214,8 @@ func _ready() -> void:
 	_apply_screen()
 	_load_home()
 	_make_keyboard()
+	_make_view_filters()
+	_apply_quick_settings()
 	_debug_hooks()
 
 
@@ -265,7 +279,7 @@ func _set_open_amount(amount: float) -> void:
 ## metre and a half away. Slow movement is smoothed a lot and fast movement barely at all, so
 ## the pointer holds still on a button but keeps up when you swing across the panel.
 func _smooth_ray(hand: Dictionary, from: Vector3, dir: Vector3, delta: float) -> void:
-	if smoothing <= 0.01 or hand.dir == Vector3.ZERO or delta <= 0.0:
+	if not smoothing_on or smoothing <= 0.01 or hand.dir == Vector3.ZERO or delta <= 0.0:
 		hand.from = from
 		hand.dir = dir
 		return
@@ -342,6 +356,7 @@ func _poll_headset(delta: float) -> void:
 		var data: Variant = JSON.parse_string(text) if text.begins_with("{") else null
 		headset_info = data if data is Dictionary else {}
 		ui.set_headset(headset_info)
+		ui.set_bitrate_available(headset_info.get("bitrate_mbps") if headset_info.get("connected", false) else null)
 		if _follow_headset(headset_info):
 			_close_for(headset_lost_reason)
 	headset_wait -= delta
@@ -352,6 +367,208 @@ func _poll_headset(delta: float) -> void:
 			var out := []
 			OS.execute("gogglesxr", ["headset", "--json"], out)
 			return str(out[0]).strip_edges().split("\n")[-1] if not out.is_empty() else "")
+
+
+# ------------------------------------------------------------------ Quick Settings
+## Keep a setting for this run and in settings.json.
+func _remember(key: String, value: Variant) -> void:
+	prefs[key] = value
+	_save_setting(key, value)
+
+
+func _on_quick(key: String, value: Variant) -> void:
+	match key:
+		"brightness", "night_tint":
+			_remember(key, value)
+			_apply_view_filters()
+		"bitrate":
+			bitrate_wait = 0.7                 # send it once the slider stops moving
+		"mic_mute":
+			OS.create_process("wpctl", ["set-mute", "@DEFAULT_AUDIO_SOURCE@", "1" if value else "0"])
+			ui.say("Microphone muted" if value else "Microphone on")
+		"boundary":
+			_remember(key, value)
+			_show_boundary(bool(value))
+		"dnd":
+			_remember(key, value)
+			_set_quiet(bool(value))
+			ui.say("Do not disturb: the desktop's notifications wait until you're done" if value else "Notifications are back on")
+		"smoothing_on":
+			_remember(key, value)
+			smoothing_on = bool(value)
+		"stats":
+			_remember(key, value)
+			stats_label.visible = bool(value)
+			stats_wait = 0.0
+
+
+## Settings saved from last time, and the microphone's real state.
+func _apply_quick_settings() -> void:
+	smoothing_on = bool(prefs.get("smoothing_on", true))
+	_apply_view_filters()
+	if bool(prefs.get("boundary", false)):
+		_show_boundary.call_deferred(true)
+	if bool(prefs.get("dnd", false)) and xr_active:
+		_set_quiet(true)
+	stats_label.visible = bool(prefs.get("stats", false))
+	var out := []
+	if OS.execute("wpctl", ["get-volume", "@DEFAULT_AUDIO_SOURCE@"], out) == 0 and not out.is_empty():
+		ui.set_quick("mic_mute", str(out[0]).contains("MUTED"))
+
+
+func _update_quick(delta: float) -> void:
+	if bitrate_wait > 0.0:
+		bitrate_wait -= delta
+		if bitrate_wait <= 0.0 and bitrate_thread == null:
+			var mbps := int(ui.quick("bitrate"))
+			bitrate_thread = Thread.new()
+			bitrate_thread.start(func() -> String:
+				var out := []
+				OS.execute("gogglesxr", ["bitrate", str(mbps)], out, true)
+				return str(out[0]).strip_edges() if not out.is_empty() else "")
+	if bitrate_thread and not bitrate_thread.is_alive():
+		var said: String = bitrate_thread.wait_to_finish()
+		bitrate_thread = null
+		if said != "":
+			ui.say(said.split("\n")[-1])
+	if stats_label and stats_label.visible:
+		stats_wait -= delta
+		if stats_wait <= 0.0:
+			stats_wait = 0.5
+			stats_label.text = _stats_text()
+
+
+## Brightness and Night tint: two see-through spheres just around your eyes, drawn over
+## everything (the game too, when the dashboard is on top of one).
+func _make_view_filters() -> void:
+	for which in ["dim", "tint"]:
+		var veil := MeshInstance3D.new()
+		var ball := SphereMesh.new()
+		ball.radius = 0.25 if which == "dim" else 0.26
+		ball.height = ball.radius * 2.0
+		ball.radial_segments = 24
+		ball.rings = 12
+		veil.mesh = ball
+		var paint := StandardMaterial3D.new()
+		paint.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		paint.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		paint.cull_mode = BaseMaterial3D.CULL_DISABLED
+		paint.no_depth_test = true
+		paint.render_priority = 127 if which == "dim" else 126
+		veil.material_override = paint
+		veil.visible = false
+		camera.add_child(veil)
+		if which == "dim":
+			view_dim = veil
+		else:
+			view_tint = veil
+	stats_label = Label3D.new()
+	stats_label.pixel_size = 0.00045
+	stats_label.font_size = 40
+	stats_label.outline_size = 10
+	stats_label.outline_modulate = Color(0, 0, 0, 0.75)
+	stats_label.modulate = DashboardUI.INK
+	stats_label.no_depth_test = true
+	stats_label.render_priority = 120
+	stats_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	stats_label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	stats_label.position = Vector3(-0.24, -0.2, -0.6)     # low on the left of your view
+	stats_label.visible = false
+	camera.add_child(stats_label)
+
+
+func _apply_view_filters() -> void:
+	var brightness := clampf(float(prefs.get("brightness", 100)), 20.0, 100.0)
+	var dim := (1.0 - brightness / 100.0)
+	(view_dim.material_override as StandardMaterial3D).albedo_color = Color(0, 0, 0, dim)
+	view_dim.visible = dim > 0.005
+	var tint := bool(prefs.get("night_tint", false))
+	(view_tint.material_override as StandardMaterial3D).albedo_color = Color(1.0, 0.5, 0.12, 0.12)
+	view_tint.visible = tint
+
+
+func _stats_text() -> String:
+	var lines := []
+	var info := headset_info
+	if info.get("connected", false):
+		var stream := []
+		if info.get("refresh_rate") != null:
+			stream.append("%d Hz" % roundi(float(info.refresh_rate)))
+		if info.get("ping_ms") != null:
+			stream.append("%d ms" % roundi(float(info.ping_ms)))
+		if info.get("bitrate_mbps") != null:
+			stream.append("%s Mb/s" % str(info.bitrate_mbps))
+		lines.append("  ·  ".join(stream) if not stream.is_empty() else "Streaming")
+		var batteries := []
+		var names := {"head": "Headset", "left": "L", "right": "R"}
+		for key in ["head", "left", "right"]:
+			var b: Dictionary = info.get("battery", {}).get(key, {})
+			if not b.is_empty():
+				batteries.append("%s %d%%%s" % [names[key], int(b.charge), "+" if b.get("charging", false) else ""])
+		if not batteries.is_empty():
+			lines.append("  ".join(batteries))
+	else:
+		lines.append("No headset")
+	lines.append("Dashboard %d fps  ·  %s" % [Engine.get_frames_per_second(), Time.get_time_string_from_system().left(5)])
+	return "\n".join(lines)
+
+
+## Boundary: the play area the headset reports (its guardian), as a low glowing fence on the floor.
+func _show_boundary(on: bool, test_points := PackedVector3Array()) -> void:
+	if boundary_node:
+		boundary_node.queue_free()
+		boundary_node = null
+	if not on:
+		return
+	var points := test_points
+	if points.is_empty():
+		var xr := XRServer.find_interface("OpenXR")
+		if xr and xr.is_initialized():
+			points = xr.get_play_area()
+	if points.size() < 3:
+		ui.say("This headset doesn't share its boundary with the PC")
+		ui.set_quick("boundary", false)
+		_remember("boundary", false)
+		return
+	var fence := ImmediateMesh.new()
+	fence.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
+	for i in points.size():
+		var a := points[i]
+		var b := points[(i + 1) % points.size()]
+		var a_top := a + Vector3.UP * 0.25
+		var b_top := b + Vector3.UP * 0.25
+		for v in [[a, 0.55], [b, 0.55], [b_top, 0.0], [a, 0.55], [b_top, 0.0], [a_top, 0.0]]:
+			fence.surface_set_color(Color(DashboardUI.ACCENT, v[1]))
+			fence.surface_add_vertex(v[0])
+	fence.surface_end()
+	var paint := StandardMaterial3D.new()
+	paint.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	paint.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	paint.cull_mode = BaseMaterial3D.CULL_DISABLED
+	paint.vertex_color_use_as_albedo = true
+	boundary_node = MeshInstance3D.new()
+	boundary_node.mesh = fence
+	boundary_node.material_override = paint
+	origin_node.add_child(boundary_node)
+
+
+## Do not disturb: `gogglesxr quiet` asks Plasma to hold notifications back for as long as it
+## runs; closing its input (or this dashboard exiting) ends it.
+func _set_quiet(on: bool) -> void:
+	if quiet_pipe:
+		quiet_pipe.close()
+		quiet_pipe = null
+	if quiet_pid > 0:
+		OS.kill(quiet_pid)
+		quiet_pid = -1
+	if not on:
+		return
+	var started := OS.execute_with_pipe("gogglesxr", PackedStringArray(["quiet"]))
+	if started.is_empty():
+		ui.say("Couldn't turn on Do not disturb")
+		return
+	quiet_pipe = started.stdio
+	quiet_pid = started.pid
 
 
 ## In the headset, the dashboard lives as long as the stream does: when the headset disconnects
@@ -1213,6 +1430,7 @@ func _process(delta: float) -> void:
 	_update_countdown(delta)
 	_update_home()
 	_update_desktop()
+	_update_quick(delta)
 	if not xr_active:
 		return
 	_update_models()
@@ -1750,6 +1968,37 @@ func _selftest() -> void:
 	check.call("the desktop preview never closes on its own", not _follow_headset(gone) and not _follow_headset(gone), "")
 	xr_active = was_xr
 	headset_lost = 0
+
+	# Quick Settings
+	ui._quick["brightness"].value = 60
+	check.call("Brightness dims the whole view", view_dim.visible and is_equal_approx((view_dim.material_override as StandardMaterial3D).albedo_color.a, 0.4) and prefs.get("brightness") == 60.0, str(prefs.get("brightness")))
+	ui._quick["brightness"].value = 100
+	check.call("and full brightness takes the veil away", not view_dim.visible, "")
+	(ui._quick["night_tint"] as Button).button_pressed = true
+	check.call("Night tint warms the view", view_tint.visible and prefs.get("night_tint") == true, "")
+	(ui._quick["night_tint"] as Button).button_pressed = false
+	(ui._quick["smoothing_on"] as Button).button_pressed = false
+	var still_hand := {"from": Vector3.ZERO, "dir": Vector3.FORWARD}
+	smoothing = 0.6
+	_smooth_ray(still_hand, Vector3.ZERO, Vector3.UP, 0.011)
+	check.call("Smoothing off follows the hand exactly", still_hand.dir == Vector3.UP, str(still_hand.dir))
+	(ui._quick["smoothing_on"] as Button).button_pressed = true
+	(ui._quick["stats"] as Button).button_pressed = true
+	headset_info = {"connected": true, "refresh_rate": 90.0, "ping_ms": 6.2, "bitrate_mbps": 80, "battery": {"head": {"charge": 77, "charging": false}}}
+	stats_wait = 0.0
+	_update_quick(0.016)
+	check.call("Stats overlay shows the stream's numbers", stats_label.visible and stats_label.text.contains("90 Hz") and stats_label.text.contains("6 ms") and stats_label.text.contains("Headset 77%"), stats_label.text.replace("\n", " | "))
+	(ui._quick["stats"] as Button).button_pressed = false
+	ui.set_bitrate_available(120)
+	check.call("Bitrate shows the stream's bitrate", ui._quick["bitrate"].editable and ui.quick("bitrate") == 120.0, str(ui.quick("bitrate")))
+	ui.set_bitrate_available(null)
+	check.call("and can't be moved without a stream", not ui._quick["bitrate"].editable, "")
+	headset_info = {}
+	_show_boundary(true, PackedVector3Array([Vector3(-1, 0, -1), Vector3(1, 0, -1), Vector3(1, 0, 1), Vector3(-1, 0, 1)]))
+	check.call("Boundary draws the play area", boundary_node != null and (boundary_node.mesh as ImmediateMesh).get_surface_count() == 1, "")
+	_show_boundary(false)
+	(ui._quick["boundary"] as Button).button_pressed = true
+	check.call("without a play area from the headset, it says so and turns off", boundary_node == null and not ui.quick("boundary"), str(ui.quick("boundary")))
 
 	# Status strip: batteries and ping from the engine
 	ui.set_headset({"connected": true, "name": "Meta Quest 3", "engine_name": "WiVRn", "ping_ms": 4.4, "connection": "wifi",

@@ -312,6 +312,10 @@ class Engine:
         """-> (ok, message)"""
         return False, f"{self.name} has no setting called {key}"
 
+    def set_bitrate(self, mbps):
+        """Change the stream's bitrate while it runs. -> (ok, message)"""
+        return False, f"{self.name} can't change the bitrate while streaming"
+
     def known_headsets(self):
         """Headsets paired with this PC: [{"name", "key", "last_seen"}]"""
         return []
@@ -472,6 +476,19 @@ class WiVRn(Engine):
         if not self.write_config(cfg):
             return False, "Couldn't save the streaming settings"
         return True, "Saved. Takes effect the next time the headset connects."
+
+    def set_bitrate(self, mbps):
+        try:
+            bps = int(float(mbps) * 1e6)
+        except (TypeError, ValueError):
+            return False, "Give the bitrate in Mb/s, for example 80"
+        if not 1_000_000 <= bps <= 500_000_000:
+            return False, "The bitrate has to be between 1 and 500 Mb/s"
+        if self._props() is None:
+            return False, f"The {self.name} server isn't running"
+        if busctl("set-property", self.BUS, self.PATH, self.BUS, "Bitrate", "u", str(bps)) is None:
+            return False, f"This version of {self.name} can't change the bitrate while streaming (Goggles Link 0.3.1 and newer can)"
+        return True, f"Stream bitrate: {bps / 1e6:g} Mb/s"
 
     # ---- the headset
     def headset(self):

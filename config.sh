@@ -53,6 +53,7 @@ APT_PACKAGES=(
   open-vm-tools open-vm-tools-desktop           # VMware guest tools (resize, clipboard)
   software-properties-common
   python3-pyqt6                                 # the GogglesXR desktop app
+  python3-gi                                    # gogglesxr quiet (Do not disturb in the headset)
   ffmpeg                                        # GogglesXR recordings of the headset view
   fastfetch                                     # system info with the Goggles logo (/etc/xdg/fastfetch)
   systemd-zram-generator earlyoom              # compressed swap, and close the game instead of freezing when RAM runs out

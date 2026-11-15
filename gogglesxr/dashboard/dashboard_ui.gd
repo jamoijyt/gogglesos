@@ -21,6 +21,7 @@ signal scale_changed(factor: float)
 signal setting_changed(key: String, value: Variant)   # saved to settings.json by main.gd
 signal big_screen_toggled(on: bool)                  # pop the desktop out into floating screens
 signal keyboard_requested
+signal quick_changed(key: String, value: Variant)    # a Quick Settings control (main.gd acts on it)
 
 const SIZE := Vector2(1280, 860)
 const PANEL_SIZE := Vector2(1280, 736)
@@ -75,6 +76,8 @@ var _quit_button: Button
 var _quit_armed_until := 0
 var _smoothing_slider: HSlider
 var _passthrough_toggle: Button
+var _quick := {}                          # Quick Settings: key -> Button or HSlider
+var _quick_readouts := {}                 # key -> Label next to a slider
 var _surroundings := "goggles"           # the environment to go back to when passthrough is turned off
 var _choices := {}                        # setting key -> [{value: Button}] (a setting can be shown twice)
 var _stats := {}                          # status strip: "head", "left", "right", "ping" -> [title, value]
@@ -474,8 +477,20 @@ func _build_quick(body: Control) -> void:
 	body.add_child(box)
 	var volume := _slider_row(box, "Volume", 0, 100, _read_volume())
 	volume.value_changed.connect(_set_volume)
-	_soon(_slider_row(box, "Brightness", 0, 100, 80))
-	_soon(_slider_row(box, "Render scale", 50, 150, 100))
+	var brightness := _slider_row(box, "Brightness", 20, 100, 100)
+	brightness.value_changed.connect(func(v): quick_changed.emit("brightness", v))
+	_quick["brightness"] = brightness
+	var bitrate := _slider_row(box, "Bitrate", 10, 300, 80)
+	bitrate.step = 5
+	bitrate.editable = false                 # until a stream reports its bitrate
+	bitrate.value_changed.connect(func(v):
+		if not bitrate.has_meta("syncing"):
+			quick_changed.emit("bitrate", v))
+	_quick["bitrate"] = bitrate
+	_quick_readouts["bitrate"] = bitrate.get_parent().get_child(2)
+	_quick_readouts["bitrate"].text = "—"
+	var bitrate_note := _label("Mb/s while streaming. Higher is sharper, lower copes better with weak Wi-Fi.", &"Small", true)
+	box.add_child(bitrate_note)
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(spacer)
@@ -492,11 +507,16 @@ func _build_quick(body: Control) -> void:
 		_select_choice("environment", value)
 		setting_changed.emit("environment", value))
 	grid.add_child(_passthrough_toggle)
-	for text in ["Mic mute", "Boundary", "Do not disturb", "Smoothing", "Stats overlay", "Night tint"]:
-		var toggle := _button(text)
+	for item in [["mic_mute", "Mic mute"], ["boundary", "Boundary"], ["dnd", "Do not disturb"],
+			["smoothing_on", "Smoothing"], ["stats", "Stats overlay"], ["night_tint", "Night tint"]]:
+		var toggle := _button(item[1])
 		toggle.toggle_mode = true
 		toggle.theme_type_variation = &"Toggle"
-		grid.add_child(_soon(toggle))
+		var key: String = item[0]
+		toggle.toggled.connect(func(on): quick_changed.emit(key, on))
+		grid.add_child(toggle)
+		_quick[key] = toggle
+	(_quick["smoothing_on"] as Button).set_pressed_no_signal(true)
 	var recentre := _button("Recentre")
 	recentre.theme_type_variation = &"Toggle"
 	recentre.pressed.connect(func(): recentre_requested.emit())
@@ -859,6 +879,43 @@ func apply_settings(prefs: Dictionary) -> void:
 			_select_choice(key, prefs[key])
 	if prefs.has("environment"):
 		_show_environment(str(prefs.environment))
+	for key in ["brightness", "boundary", "dnd", "smoothing_on", "stats", "night_tint"]:
+		if prefs.has(key):
+			set_quick(key, prefs[key])
+
+
+## Show a Quick Settings value without acting on it (saved settings, or the system's state).
+func set_quick(key: String, value: Variant) -> void:
+	var control: Variant = _quick.get(key)
+	if control is Button:
+		(control as Button).set_pressed_no_signal(bool(value))
+	elif control is HSlider:
+		var slider := control as HSlider
+		slider.set_meta("syncing", true)
+		slider.set_value_no_signal(float(value))
+		slider.remove_meta("syncing")
+		var readout: Label = _quick_readouts.get(key, slider.get_parent().get_child(2))
+		readout.text = str(int(slider.value))
+
+
+func quick(key: String) -> Variant:
+	var control: Variant = _quick.get(key)
+	if control is Button:
+		return (control as Button).button_pressed
+	if control is HSlider:
+		return (control as HSlider).value
+	return null
+
+
+## The bitrate slider works while a stream reports its bitrate.
+func set_bitrate_available(mbps: Variant) -> void:
+	var slider: HSlider = _quick["bitrate"]
+	slider.editable = mbps != null
+	slider.modulate.a = 1.0 if mbps != null else 0.45
+	if mbps == null:
+		_quick_readouts["bitrate"].text = "—"
+	elif not slider.has_meta("dragging"):
+		set_quick("bitrate", mbps)
 
 
 ## Keep the Quick Settings Passthrough toggle in step with the chosen surroundings.
@@ -936,8 +993,12 @@ func _wire(node: Node) -> void:
 	elif node is Slider:
 		node.set_meta("wired", true)
 		var slider: Slider = node
-		slider.drag_started.connect(func(): _slider_dragging = true)
-		slider.drag_ended.connect(func(_changed): _slider_dragging = false)
+		slider.drag_started.connect(func():
+			_slider_dragging = true
+			slider.set_meta("dragging", true))
+		slider.drag_ended.connect(func(_changed):
+			_slider_dragging = false
+			slider.remove_meta("dragging"))
 		slider.value_changed.connect(func(v):
 			if _slider_dragging:
 				_play("key", 0.8 + 0.5 * inverse_lerp(slider.min_value, slider.max_value, v)))
