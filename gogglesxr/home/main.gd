@@ -26,6 +26,7 @@ extends Node3D
 ## GOGGLESXR_AT=x,y,z            desktop preview: stand here (y: the floor, 0 or upstairs)
 ## GOGGLESXR_HOME_MENU=look      desktop preview: open the Home menu on a page
 ## GOGGLESXR_HOME_GAMES=12       fill the shelf with that many made-up games
+## GOGGLESXR_SHOW_HANDS=1       desktop preview: show both hands in front of you
 ## GOGGLESXR_TOUR=1              start with the tour
 ## GOGGLESXR_THUMBS=/folder      draw the catalogue's pictures (thumbs/) into a folder, then quit
 ## GOGGLESXR_SELFTEST=1          check the pieces, print results, quit
@@ -45,7 +46,7 @@ const WALK_SPEED := 2.0                   # metres a second (smooth movement)
 const AVATAR_LAYER := 1 << 19             # seen only in mirrors
 const DEFAULT_LOOK := {"sky": "grid", "walls": "teal", "floor": "tiles", "accent": "green", "brightness": 50.0,
 		"mood0": "bright", "mood1": "warm"}
-const DEFAULT_SETTINGS := {"move": "teleport", "turn": 45, "sounds": "on", "hands": "light", "toured": false}
+const DEFAULT_SETTINGS := {"move": "teleport", "turn": 45, "sounds": "on", "hand_style": "ghost", "toured": false}
 const U := Room.UP_FLOOR
 # What a new home starts with: [id, x, y, z, turn in degrees]
 const STARTER := [
@@ -210,6 +211,13 @@ func _ready() -> void:
 		return
 	if OS.get_environment("GOGGLESXR_TOUR") != "" or (xr_active and not bool(settings.toured)):
 		tour.start.call_deferred()
+	if OS.get_environment("GOGGLESXR_SHOW_HANDS") != "":   # preview: both hands in front of you, half closed
+		for side in hands:
+			var grip_node: XRController3D = hands[side].grip_node
+			grip_node.position = Vector3(-0.12 if side == "left" else 0.12, 1.45, -0.4)
+			grip_node.rotation_degrees = Vector3(40, 0, 0)
+			hands[side].model.visible = true
+			hands[side].model.follow(0.4 if side == "left" else 1.0, 0.0 if side == "left" else 0.2, 1.0)
 	var page := OS.get_environment("GOGGLESXR_HOME_MENU")
 	if page != "":
 		_show_menu(true)
@@ -255,7 +263,7 @@ func _load_home(from_disk := true) -> void:
 		sounds.set_mode(str(settings.sounds))
 	for side in hands:
 		if hands[side].model:
-			hands[side].model.set_style(str(settings.hands))
+			hands[side].model.set_style(str(settings.hand_style))
 	menu.set_values(look)
 	menu.set_values(settings)
 
@@ -327,7 +335,7 @@ func _on_setting(key: String, value: Variant) -> void:
 	settings[key] = value
 	if key == "sounds" and sounds:
 		sounds.set_mode(str(value))
-	if key == "hands":
+	if key == "hand_style":
 		for side in hands:
 			if hands[side].model:
 				hands[side].model.set_style(str(value))
@@ -569,7 +577,7 @@ func _make_hand(side: String) -> Dictionary:
 	grip.tracker = aim.tracker
 	grip.pose = &"grip"
 	origin.add_child(grip)
-	var model := Hands.new(side, str(settings.hands))
+	var model := Hands.new(side, str(settings.hand_style))
 	model.visible = false
 	grip.add_child(model)
 	var laser := MeshInstance3D.new()
@@ -1474,8 +1482,10 @@ func _selftest() -> void:
 	model.follow(1.0, 1.0, 1.0)
 	check.call("the trigger curls the index finger", straight.angle_to(model.skeleton.get_bone_pose_rotation(index)) > 0.3, "")
 	model.follow(0.0, 0.0, 1.0)
+	check.call("the hands are see-through by default", model.mesh.material_override is ShaderMaterial, str(model.mesh.material_override))
 	model.set_style("lab")
-	check.call("hands have styles", (model.mesh.material_override as StandardMaterial3D).albedo_texture != null, "")
+	check.call("and have other styles", (model.mesh.material_override as StandardMaterial3D).albedo_texture != null, "")
+	model.set_style("ghost")
 
 	# Furniture: detailed, textured
 	var sofa := furniture.spawn("Sofa_01", Transform3D(Basis.IDENTITY, Vector3(-1, 0, 0)))
@@ -1669,8 +1679,8 @@ func _selftest() -> void:
 	count = furniture.items().size()
 	menu.poster_requested.emit(ProjectSettings.globalize_path("res://environments/goggles-home.jpg"), false)
 	check.call("your pictures become posters", furniture.items().size() == count + 1 and str(furniture.items().back().get_meta("picture", "")).ends_with("goggles-home.jpg"), "")
-	menu.setting_changed.emit("hands", "dark")
-	check.call("hand style can be changed", settings.hands == "dark", "")
+	menu.setting_changed.emit("hand_style", "dark")
+	check.call("hand style can be changed", settings.hand_style == "dark", "")
 	menu.action.emit("close")
 	await get_tree().create_timer(0.3).timeout
 	check.call("Close closes it", not menu_quad.visible, "")

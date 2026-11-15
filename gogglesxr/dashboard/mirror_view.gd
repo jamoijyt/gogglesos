@@ -132,8 +132,13 @@ func _process(delta: float) -> void:
 	if head:
 		overlay_camera.global_transform = head.global_transform.translated_local(Vector3(-EYE_OFFSET, 0, 0))
 	_since_picture += delta
-	if _since_picture > 3.0 and note.text != "":
+	if _since_picture > 3.0 and texture == null and note.text != "":
 		note.text = "Only the dashboard can be shown: the game underneath can't be captured (only Vulkan games and Goggles Home can)."
+	elif _since_picture > 1.5 and texture != null and picture.modulate.a > 0.5:
+		# no new pictures: the app underneath has closed (or stopped drawing). Don't show a
+		# frozen picture as if it were live.
+		picture.modulate = Color(1, 1, 1, 0.3)
+		note.text = "Waiting for the picture: the game or Goggles Home underneath isn't drawing right now."
 	_wait -= delta
 	if _wait > 0.0:
 		return
@@ -184,6 +189,7 @@ func _show(image: Image, angles: Vector4) -> void:
 		fov = angles
 		_apply_fov()
 	_since_picture = 0.0
+	picture.modulate = Color.WHITE
 	note.text = ""
 
 

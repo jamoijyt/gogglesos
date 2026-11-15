@@ -257,7 +257,7 @@ func _build_settings(page: VBoxContainer) -> void:
 	var styles := []
 	for id in Hands.STYLES:
 		styles.append([id, Hands.STYLES[id][0]])
-	_choice_row(page, "Hands", "hands", styles, setting_changed)
+	_choice_row(page, "Hands", "hand_style", styles, setting_changed)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 12)
 	page.add_child(row)
