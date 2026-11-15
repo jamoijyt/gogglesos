@@ -375,9 +375,11 @@ def dashboard(extra=()):
     for name in os.listdir(src):
         if name.endswith((".gd", ".tscn", ".godot", ".tres", ".uid", ".gdextension")) and os.path.isfile(os.path.join(src, name)):
             shutil.copy2(os.path.join(src, name), os.path.join(project, name))
-    if os.path.isdir(os.path.join(src, "environments")):     # the home environment's pictures
-        shutil.copytree(os.path.join(src, "environments"), os.path.join(project, "environments"), dirs_exist_ok=True,
-                        ignore=shutil.ignore_patterns("*.py"))
+    # The home environment's pictures, the interface sounds and the fonts
+    for folder in ("environments", "sounds", "fonts"):
+        if os.path.isdir(os.path.join(src, folder)):
+            shutil.copytree(os.path.join(src, folder), os.path.join(project, folder), dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns("*.py"))
     # The overlay extension: Godot only loads extensions listed in its project cache
     if os.path.isdir(os.path.join(src, "bin")):
         shutil.copytree(os.path.join(src, "bin"), os.path.join(project, "bin"), dirs_exist_ok=True)
