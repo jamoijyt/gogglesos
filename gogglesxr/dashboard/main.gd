@@ -95,6 +95,9 @@ var keyboard_for: Node3D                  # the screen it sits under, or null fo
 var keyboard_pointer := Vector2(-1, -1)
 var wheel_wait := 0.0
 var sounds: UISounds
+var headset_lost := 0                     # answers in a row saying the headset or server is gone
+var headset_lost_reason := ""
+var closing := false
 
 
 func _ready() -> void:
@@ -170,6 +173,11 @@ func _ready() -> void:
 	var xr := XRServer.find_interface("OpenXR")
 	xr_active = xr != null and xr.is_initialized()
 	if xr_active:
+		# The runtime is going away (server stopped or crashed): nothing left to draw into
+		var openxr := xr as OpenXRInterface
+		if openxr:
+			openxr.session_loss_pending.connect(func(): _close_for("The VR session ended"))
+			openxr.instance_exiting.connect(func(): _close_for("The VR runtime stopped"))
 		get_viewport().use_xr = true
 		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 		ui.set_status("Running in the headset through %s." % xr.get_system_info().get("XRRuntimeName", "an OpenXR runtime"))
@@ -334,14 +342,43 @@ func _poll_headset(delta: float) -> void:
 		var data: Variant = JSON.parse_string(text) if text.begins_with("{") else null
 		headset_info = data if data is Dictionary else {}
 		ui.set_headset(headset_info)
+		if _follow_headset(headset_info):
+			_close_for(headset_lost_reason)
 	headset_wait -= delta
 	if headset_wait <= 0.0 and headset_thread == null:
-		headset_wait = 5.0
+		headset_wait = 3.0 if xr_active else 5.0
 		headset_thread = Thread.new()
 		headset_thread.start(func() -> String:
 			var out := []
 			OS.execute("gogglesxr", ["headset", "--json"], out)
 			return str(out[0]).strip_edges().split("\n")[-1] if not out.is_empty() else "")
+
+
+## In the headset, the dashboard lives as long as the stream does: when the headset disconnects
+## or the streaming server stops, it closes (the GogglesXR app opens it again when the headset
+## comes back). Two answers in a row are needed, so a short Wi-Fi hiccup doesn't close it.
+## Returns true when it is time to close.
+func _follow_headset(info: Dictionary) -> bool:
+	if not xr_active or not info.has("running"):
+		return false                          # the desktop preview, or no answer from the engine
+	if not info.get("running", false):
+		headset_lost_reason = "The streaming server stopped"
+	elif not info.get("connected", false):
+		headset_lost_reason = "The headset disconnected"
+	else:
+		headset_lost = 0
+		return false
+	headset_lost += 1
+	return headset_lost >= 2
+
+
+func _close_for(reason: String) -> void:
+	if closing:
+		return
+	closing = true
+	print("GogglesXR dashboard: %s, closing." % reason)
+	desktop_input.stop()
+	get_tree().quit()
 
 
 ## Whether a VR game is running: Steam's launcher, GogglesXR's capture layer (refreshed every 2 s
@@ -1693,6 +1730,26 @@ func _selftest() -> void:
 	a_button.pressed.emit()
 	check.call("Sounds: Off silences them", sounds.played.is_empty(), str(sounds.played))
 	_on_setting("ui_sounds", "on")
+
+	# Following the stream: closes when the headset or the server has gone (two answers in a row)
+	var was_xr := xr_active
+	xr_active = true
+	var up := {"running": true, "connected": true}
+	var gone := {"running": true, "connected": false}
+	check.call("a connected headset keeps the dashboard open", not _follow_headset(up) and not _follow_headset(up), "")
+	check.call("one missed answer doesn't close it", not _follow_headset(gone), str(headset_lost))
+	check.call("it comes back, nothing happens", not _follow_headset(up) and headset_lost == 0, str(headset_lost))
+	_follow_headset(gone)
+	check.call("two in a row: the headset disconnected, so it closes", _follow_headset(gone) and headset_lost_reason == "The headset disconnected", headset_lost_reason)
+	headset_lost = 0
+	_follow_headset({"running": false})
+	check.call("the server stopping closes it too", _follow_headset({"running": false}) and headset_lost_reason == "The streaming server stopped", headset_lost_reason)
+	headset_lost = 0
+	check.call("no answer from the engine changes nothing", not _follow_headset({}) and not _follow_headset({}), "")
+	xr_active = false
+	check.call("the desktop preview never closes on its own", not _follow_headset(gone) and not _follow_headset(gone), "")
+	xr_active = was_xr
+	headset_lost = 0
 
 	# Status strip: batteries and ping from the engine
 	ui.set_headset({"connected": true, "name": "Meta Quest 3", "engine_name": "WiVRn", "ping_ms": 4.4, "connection": "wifi",

@@ -812,7 +812,7 @@ class Window(QMainWindow):
         failed = [c for c in checks if c[0] is False]
         self.poll_headset()
         info = self.headset
-        connected = bool(info.get("connected")) if info.get("running") else os.path.exists(self.tool.IPC_SOCKET)
+        connected = self.headset_connected()
         animated = self.settings["animations"]
         if failed:
             self.headline.setText("GogglesXR needs setting up")
@@ -886,6 +886,14 @@ class Window(QMainWindow):
                 return
             if done:
                 done(result)
+
+    def headset_connected(self):
+        """Whether a headset is streaming. The engine's answer when it has one: a stopped server
+        means no headset, even if the runtime's socket file is still lying around."""
+        info = self.headset
+        if "running" in info:
+            return bool(info.get("running") and info.get("connected"))
+        return os.path.exists(self.tool.IPC_SOCKET)
 
     def poll_headset(self, now=False):
         """Ask the engine about the headset every few seconds, without holding up the window."""
@@ -1138,6 +1146,11 @@ class Window(QMainWindow):
                 command = self.engine.server_command()
                 self.server.start(command[0], command[1:])
         running = self.dashboard is not None and self.dashboard.state() != QProcess.ProcessState.NotRunning
+        in_headset = running and bool(self.dashboard.property("overlay"))
+        if connected and running and not in_headset and self.settings["auto_dashboard"]:
+            # A preview window from before the headset connected: make way for the real one
+            self.dashboard.terminate()
+            running = False
         if connected and self.settings["auto_dashboard"] and not broken and not running:
             if self.dashboard_retry <= 0:
                 self.start_dashboard()
@@ -1146,16 +1159,19 @@ class Window(QMainWindow):
                 self.dashboard_retry -= 1
         elif not connected:
             self.dashboard_retry = 0
-            if running and self.dashboard.property("auto"):
+            # The headset disconnected or the server stopped: the dashboard in the headset has
+            # nothing to draw into any more, however it was opened. (It also notices by itself.)
+            if in_headset:
                 self.dashboard.terminate()
 
     def start_dashboard(self, manual=False):
         if self.dashboard is not None and self.dashboard.state() != QProcess.ProcessState.NotRunning:
             return
         library.write_dashboard_list(self.settings["show_all_games"])
-        connected = os.path.exists(self.tool.IPC_SOCKET)
+        connected = self.headset_connected()
         self.dashboard = QProcess(self)
         self.dashboard.setProperty("auto", not manual)
+        self.dashboard.setProperty("overlay", connected)
         self.dashboard.setProcessChannelMode(QProcess.ProcessChannelMode.ForwardedChannels)
         self.dashboard.start(sys.executable, [TOOL, "dashboard"] + (["--overlay"] if connected else []))
 
