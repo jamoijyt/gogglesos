@@ -21,6 +21,7 @@ signal scale_changed(factor: float)
 signal setting_changed(key: String, value: Variant)   # saved to settings.json by main.gd
 signal big_screen_toggled(on: bool)                  # pop the desktop out into floating screens
 signal keyboard_requested
+signal mirror_toggled(on: bool)                      # the VR view window on the desktop
 signal quick_changed(key: String, value: Variant)    # a Quick Settings control (main.gd acts on it)
 
 const SIZE := Vector2(1280, 860)
@@ -72,6 +73,7 @@ var _game_note: Label
 var _game_art: TextureRect
 var _game_button: Button
 var _record_button: Button
+var _mirror_button: Button
 var _quit_button: Button
 var _quit_armed_until := 0
 var _smoothing_slider: HSlider
@@ -396,10 +398,16 @@ func _build_game(body: Control) -> void:
 	_quit_button = _button("Quit game")
 	_quit_button.pressed.connect(_quit_pressed)
 	grid.add_child(_quit_button)
+	_mirror_button = _button("VR view on desktop")
+	_mirror_button.toggle_mode = true
+	_mirror_button.theme_type_variation = &"Toggle"
+	_mirror_button.tooltip_text = "A window on the PC showing what the headset shows"
+	_mirror_button.toggled.connect(func(on): mirror_toggled.emit(on))
+	grid.add_child(_mirror_button)
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	side.add_child(spacer)
-	side.add_child(_label("Screenshots and clips of the headset view go to Pictures and Videos (GogglesXR folder). Shape and quality: Settings > Recording.", &"Muted", true))
+	side.add_child(_label("Screenshots and clips of the headset view go to Pictures and Videos (GogglesXR folder). Shape and quality: Settings > Recording. VR view on desktop shows the headset's view in a window on the PC.", &"Muted", true))
 	var clear_of_hint := Control.new()       # room for the "▼ Desktop" hint
 	clear_of_hint.custom_minimum_size = Vector2(0, 26)
 	side.add_child(clear_of_hint)
@@ -420,6 +428,10 @@ func _quit_pressed() -> void:
 	if _quit_armed_until != 0 and Time.get_ticks_msec() >= _quit_armed_until:
 		_quit_armed_until = 0
 		_quit_button.text = "Quit game"
+
+
+func set_mirror(on: bool) -> void:
+	_mirror_button.set_pressed_no_signal(on)
 
 
 func set_recording(on: bool) -> void:

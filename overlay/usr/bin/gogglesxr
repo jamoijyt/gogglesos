@@ -405,6 +405,15 @@ def dashboard(extra=()):
         return 1
     if is_on():
         ensure_layer()
+    _set_title(project, "GogglesXR Dashboard", overlay)
+    if overlay:
+        ensure_window_rule()
+    old = os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local/share"),
+                       "godot", "app_userdata", "GogglesXR Dashboard", "dashboard.cfg")
+    new = os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local/share"), "gogglesxr-dashboard", "dashboard.cfg")
+    if os.path.isfile(old) and not os.path.exists(new):  # where you left the dashboard, from before it had its own folder
+        os.makedirs(os.path.dirname(new), exist_ok=True)
+        shutil.copy2(old, new)
     env = dict(os.environ)
     # The real controller models (downloaded by the system install), drawn while the dashboard is open
     env.setdefault("GOGGLESXR_CONTROLLERS", os.path.join(os.path.dirname(DASHBOARD_SRC), "gogglesxr-controllers"))
@@ -433,7 +442,7 @@ def home(extra=()):
         if os.path.isdir(os.path.join(shared, folder)):
             shutil.copytree(os.path.join(shared, folder), os.path.join(project, folder), dirs_exist_ok=True,
                             ignore=shutil.ignore_patterns("*.py", "*.import"))
-    for script in ("steam_library.gd", "ui_sounds.gd"):     # the game list reader and the interface sounds
+    for script in ("steam_library.gd", "ui_sounds.gd", "desktop_view.gd"):   # the game list, the interface sounds, the desktop for TVs
         for name in (script, script + ".uid"):
             if os.path.isfile(os.path.join(shared, name)):
                 shutil.copy2(os.path.join(shared, name), os.path.join(project, name))
@@ -444,8 +453,13 @@ def home(extra=()):
     godot = find_godot() or fetch_godot()
     if not godot:
         return 1
+    ensure_layer()                              # the capture layer, so the dashboard's VR view can show Home
+    in_headset = os.path.exists(IPC_SOCKET)
+    _set_title(project, "Goggles Home", in_headset)
+    if in_headset:
+        ensure_window_rule()
     env = dict(os.environ)
-    env["DISABLE_GOGGLESXR_CAPTURE"] = "1"      # Home isn't a game: no screenshots layer, no "game is drawing" sign
+    env["GOGGLESXR_CAPTURE_NO_STATUS"] = "1"    # Home isn't a game: the layer mustn't say "a game is drawing"
     if not os.path.exists(IPC_SOCKET):
         print("No headset connected, so Goggles Home opens in a preview window.")
     return subprocess.run([godot, "--path", project, *extra], env=env).returncode
@@ -482,6 +496,50 @@ def vr_state():
 def vr_state_command(args):
     print(vr_state())
     return 0
+
+
+# ------------------------------------------------------------------ windows of the VR apps
+# The dashboard and Goggles Home draw into the headset; on the desktop their windows would only
+# be in the way. Running for the headset, their window title gets HEADSET_MARK (through the
+# project's override.cfg), and a KWin window rule keeps such windows minimised and out of the
+# taskbar, the task switcher and the pager. (The dashboard's VR view button opens a separate
+# window for watching on the desktop.) A preview window, without a headset, stays a normal one.
+HEADSET_MARK = "(in the headset)"
+WINDOW_RULE = "gogglesxr-vr-windows"
+
+
+def _set_title(project, name, in_headset):
+    with open(os.path.join(project, "override.cfg"), "w", encoding="utf-8") as f:
+        f.write("[application]\n\n" + f'config/name="{name}{" " + HEADSET_MARK if in_headset else ""}"\n')
+
+
+def ensure_window_rule():
+    """Add (once) the KWin rule that hides the VR apps' windows. True if it is in place."""
+    if not shutil.which("kwriteconfig6") or not shutil.which("kreadconfig6"):
+        return False
+    read = lambda group, key: subprocess.run(["kreadconfig6", "--file", "kwinrulesrc", "--group", group, "--key", key],
+                                             capture_output=True, text=True).stdout.strip()
+    if read(WINDOW_RULE, "title") == HEADSET_MARK:
+        return True
+    settings = {"Description": "GogglesXR: windows of apps drawing into the headset", "title": HEADSET_MARK,
+                "titlematch": "2",                      # the title contains it
+                "types": "1",                           # normal windows
+                "minimize": "true", "minimizerule": "2",          # 2: force
+                "skiptaskbar": "true", "skiptaskbarrule": "2",
+                "skippager": "true", "skippagerrule": "2",
+                "skipswitcher": "true", "skipswitcherrule": "2",
+                "noborder": "true", "noborderrule": "2"}
+    for key, value in settings.items():
+        subprocess.run(["kwriteconfig6", "--file", "kwinrulesrc", "--group", WINDOW_RULE, "--key", key, value])
+    rules = [r for r in read("General", "rules").split(",") if r]
+    if WINDOW_RULE not in rules:
+        rules.append(WINDOW_RULE)
+    subprocess.run(["kwriteconfig6", "--file", "kwinrulesrc", "--group", "General", "--key", "rules", ",".join(rules)])
+    subprocess.run(["kwriteconfig6", "--file", "kwinrulesrc", "--group", "General", "--key", "count", str(len(rules))])
+    # Make KWin read its rules again (a moment when no VR game is starting)
+    subprocess.run(["busctl", "--user", "call", "org.kde.KWin", "/KWin", "org.kde.KWin", "reconfigure"],
+                   capture_output=True, timeout=5)
+    return True
 
 
 def _show_all_games():
@@ -529,7 +587,7 @@ def app(args):
 CACHE = os.path.join(HOME, ".cache")
 CAPTURE_DIR = os.path.join(CACHE, "gogglesxr", "capture")   # the layer uses $HOME/.cache too
 LAYER_NAME = "libgogglesxr_capture.so"
-LAYER_SRC = os.path.join(APP_DIR, "layer", LAYER_NAME)
+LAYER_SRC = os.environ.get("GOGGLESXR_LAYER_SRC") or os.path.join(APP_DIR, "layer", LAYER_NAME)   # (tests: a fresh build)
 LAYER_DIR = os.path.join(DATA, "layer")
 LAYER_MANIFEST = os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local/share"),
                               "openxr", "1", "api_layers", "implicit.d", "gogglesxr_capture.json")

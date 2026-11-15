@@ -31,11 +31,12 @@ var _wait := 0.0
 var _restart_wait := 0.0
 
 
-func _init() -> void:
+func _init(file_name := "gogglesxr-desktop.raw") -> void:
+	# (Goggles Home's TVs use their own file, so the dashboard's and Home's don't collide)
 	var run := OS.get_environment("XDG_RUNTIME_DIR")
 	if run == "" or not DirAccess.dir_exists_absolute(run):
 		run = OS.get_user_data_dir()
-	_path = run.path_join("gogglesxr-desktop.raw")
+	_path = run.path_join(file_name)
 
 
 ## Something (the panel, the big screen) wants the picture, or no longer does.

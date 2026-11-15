@@ -26,6 +26,7 @@ const DesktopScreen := preload("res://desktop_screen.gd")
 const DesktopInput := preload("res://desktop_input.gd")
 const Keyboard := preload("res://keyboard.gd")
 const UISounds := preload("res://ui_sounds.gd")
+const MirrorView := preload("res://mirror_view.gd")
 const KEYBOARD_WIDTH := 1.05              # metres
 const HOME_IMAGE := "res://environments/goggles-home.jpg"
 const BIG_SCREEN_WIDTH := 3.0             # metres
@@ -106,6 +107,7 @@ var keyboard_for: Node3D                  # the screen it sits under, or null fo
 var keyboard_pointer := Vector2(-1, -1)
 var wheel_wait := 0.0
 var sounds: UISounds
+var mirror: MirrorView                    # the VR view window on the desktop
 var headset_lost := 0                     # answers in a row saying the headset or server is gone
 var headset_lost_reason := ""
 var closing := false
@@ -131,6 +133,7 @@ func _ready() -> void:
 	ui.quit_requested.connect(func(): ui.say("Closing the game…"); _run_tool("quit-game"))
 	ui.smoothing_changed.connect(func(v): smoothing = v; _save_prefs())
 	ui.quick_changed.connect(_on_quick)
+	ui.mirror_toggled.connect(_set_mirror)
 	ui.setting_changed.connect(_on_setting)
 	ui.big_screen_toggled.connect(_pop_out_screens)
 	ui.keyboard_requested.connect(func(): _show_keyboard(null, not keyboard_quad.visible or keyboard_for != null))
@@ -215,6 +218,9 @@ func _ready() -> void:
 	_apply_screen()
 	_load_home()
 	_make_keyboard()
+	mirror = MirrorView.new(camera)
+	add_child(mirror)
+	mirror.closed.connect(func(): ui.set_mirror(false))
 	_make_view_filters()
 	_apply_quick_settings()
 	_debug_hooks()
@@ -372,6 +378,16 @@ func _poll_headset(delta: float) -> void:
 
 
 # ------------------------------------------------------------------ Quick Settings
+## The VR view: a window on the desktop with the headset's view, the dashboard included.
+func _set_mirror(on: bool) -> void:
+	if on:
+		mirror.open()
+		ui.say("VR view: open on the PC's desktop")
+	else:
+		mirror.close()
+	ui.set_mirror(on)
+
+
 ## Keep a setting for this run and in settings.json.
 func _remember(key: String, value: Variant) -> void:
 	prefs[key] = value
@@ -1708,6 +1724,7 @@ func _unhandled_input(event: InputEvent) -> void:
 ## GOGGLESXR_TEST_BG=1           fill the background with a loud colour (to stand in for a game)
 ## GOGGLESXR_SHOW_MODELS=1       desktop preview: line up every controller model (right hands pressed)
 ## GOGGLESXR_RECENTRE=1          start the recentre countdown straight away
+## GOGGLESXR_MIRROR=1           open the VR view window
 ## GOGGLESXR_POP_OUT=1           pop the desktop out into floating screens, with the keyboard
 ##                               (=keyboard: just the keyboard, under the dashboard)
 ## GOGGLESXR_SELFTEST=1          drive the dashboard through its pointer code, print results, quit
@@ -1725,6 +1742,8 @@ func _debug_hooks() -> void:
 		RenderingServer.set_default_clear_color(Color(0.75, 0.1, 0.45))
 	if OS.get_environment("GOGGLESXR_RECENTRE") != "":
 		_recentre.call_deferred()         # after the dashboard's opening animation has started
+	if OS.get_environment("GOGGLESXR_MIRROR") != "":
+		_set_mirror.call_deferred(true)
 	if OS.get_environment("GOGGLESXR_POP_OUT") == "keyboard":
 		await get_tree().create_timer(0.5).timeout
 		_show_keyboard(null, true)
@@ -2025,6 +2044,31 @@ func _selftest() -> void:
 	_show_boundary(false)
 	(ui._quick["boundary"] as Button).button_pressed = true
 	check.call("without a play area from the headset, it says so and turns off", boundary_node == null and not ui.quick("boundary"), str(ui.quick("boundary")))
+
+	# VR view: the picture from the capture layer, with the dashboard drawn over it
+	var capture_dir := OS.get_environment("HOME").path_join(".cache/gogglesxr/capture")
+	DirAccess.make_dir_recursive_absolute(capture_dir)
+	var fake := PackedByteArray()
+	fake.resize(32 + 64 * 48 * 4)
+	fake.encode_u32(0, 0x4d445847)          # "GXDM"
+	fake.encode_u32(4, 64)
+	fake.encode_u32(8, 48)
+	fake.encode_u32(12, 7)
+	for i in 4:
+		fake.encode_float(16 + i * 4, [-0.8, 0.75, 0.7, -0.72][i])
+	for i in 64 * 48:
+		fake.encode_u32(32 + i * 4, 0xff3366cc)
+	var raw := FileAccess.open(capture_dir.path_join("mirror.raw"), FileAccess.WRITE)
+	raw.store_buffer(fake)
+	raw.close()
+	ui._mirror_button.button_pressed = true
+	check.call("VR view asks the capture layer for pictures", mirror.is_open() and FileAccess.file_exists(capture_dir.path_join("mirror.on")), "")
+	await get_tree().create_timer(0.6).timeout
+	check.call("and shows them, with the eye's field of view", mirror.texture != null and mirror.texture.get_size() == Vector2(64, 48) and is_equal_approx(mirror.fov.x, -0.8), str(mirror.fov))
+	check.call("the dashboard is drawn over it from the eye", mirror.overlay_camera.projection == Camera3D.PROJECTION_FRUSTUM and mirror.overlay_view.size.x == MirrorView.WIDTH, str(mirror.overlay_view.size))
+	ui._mirror_button.button_pressed = false
+	check.call("closing it stops the pictures", not mirror.is_open() and not FileAccess.file_exists(capture_dir.path_join("mirror.on")), "")
+	DirAccess.remove_absolute(capture_dir.path_join("mirror.raw"))
 
 	# Status strip: batteries and ping from the engine
 	ui.set_headset({"connected": true, "name": "Meta Quest 3", "engine_name": "WiVRn", "ping_ms": 4.4, "connection": "wifi",
