@@ -2066,6 +2066,8 @@ func _selftest() -> void:
 	await get_tree().create_timer(0.6).timeout
 	check.call("and shows them, with the eye's field of view", mirror.texture != null and mirror.texture.get_size() == Vector2(64, 48) and is_equal_approx(mirror.fov.x, -0.8), str(mirror.fov))
 	check.call("the dashboard is drawn over it from the eye", mirror.overlay_camera.projection == Camera3D.PROJECTION_FRUSTUM and mirror.overlay_view.size.x == MirrorView.WIDTH, str(mirror.overlay_view.size))
+	await get_tree().create_timer(1.8).timeout
+	check.call("when the pictures stop, it says so instead of looking frozen", mirror.picture.modulate.a < 0.5 and mirror.note.text.begins_with("Waiting"), mirror.note.text)
 	ui._mirror_button.button_pressed = false
 	check.call("closing it stops the pictures", not mirror.is_open() and not FileAccess.file_exists(capture_dir.path_join("mirror.on")), "")
 	DirAccess.remove_absolute(capture_dir.path_join("mirror.raw"))

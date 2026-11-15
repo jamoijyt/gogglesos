@@ -481,7 +481,9 @@ def game_running(apps=None):
     except OSError:
         pass
     for app in apps or []:
-        if app.get("active") and not app.get("overlay") and app.get("name") not in VR_HELPERS:
+        name = str(app.get("name") or "")
+        # (in the headset their names carry HEADSET_MARK too: "Goggles Home (in the headset)")
+        if app.get("active") and not app.get("overlay") and not name.startswith(VR_HELPERS):
             return True
     return False
 

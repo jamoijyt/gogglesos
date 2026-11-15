@@ -7,7 +7,9 @@ extends Node3D
 ## Put it under an XRController3D on the "grip" pose. The poses come from XR Tools' animations
 ## ("Grip 5" open, "Grip" closed), read once and blended bone by bone.
 
-const STYLES := {    # id -> [name, colour picture, normal map, roughness/metal map]
+const STYLES := {    # id -> [name, colour picture, normal map, roughness/metal map] ("" : see-through)
+	"ghost": ["See-through", "", "", ""],
+	"ghost_white": ["See-through white", "", "", ""],
 	"light": ["Light skin", "caucasian_realistic_baseColor", "hands_normal", "hands_occlusionRoughnessMetallic"],
 	"dark": ["Dark skin", "african_realistic_baseColor", "hands_normal", "hands_occlusionRoughnessMetallic"],
 	"lab": ["White gloves", "labglove_baseColor", "glove_normal", "glove_occlusionRoughnessMetallic"],
@@ -27,7 +29,20 @@ var _index_bones := {}                    # bone index -> true for the index fin
 var _material: StandardMaterial3D
 
 
-func _init(which := "left", style := "light") -> void:
+# See-through hands: faint inside, a glowing rim where you see the hand edge-on
+const GHOST_SHADER := """
+shader_type spatial;
+render_mode unshaded, blend_mix, depth_draw_always, cull_back;
+uniform vec4 colour : source_color = vec4(0.24, 0.86, 0.52, 1.0);
+void fragment() {
+	float rim = pow(1.0 - clamp(abs(dot(normalize(NORMAL), normalize(VIEW))), 0.0, 1.0), 2.2);
+	ALBEDO = mix(colour.rgb * 0.6, colour.rgb * 1.6 + vec3(0.15), rim);
+	ALPHA = 0.12 + 0.75 * rim;
+}
+"""
+
+
+func _init(which := "left", style := "ghost") -> void:
 	side = which
 	var letter := "L" if side == "left" else "R"
 	var path := ProjectSettings.globalize_path("res://hands/Hand_low_%s.gltf" % letter)
@@ -81,7 +96,15 @@ func _read_pose(name: String, into: Dictionary) -> void:
 func set_style(style: String) -> void:
 	if mesh == null:
 		return
-	var files: Array = STYLES.get(style, STYLES["light"])
+	var files: Array = STYLES.get(style, STYLES["ghost"])
+	if files[1] == "":
+		var ghost := ShaderMaterial.new()
+		ghost.shader = Shader.new()
+		ghost.shader.code = GHOST_SHADER
+		ghost.set_shader_parameter("colour", Color("3ddc84") if style == "ghost" else Color(0.85, 0.95, 1.0))
+		mesh.material_override = ghost
+		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		return
 	_material = StandardMaterial3D.new()
 	_material.albedo_texture = _picture(files[1])
 	_material.normal_enabled = true
