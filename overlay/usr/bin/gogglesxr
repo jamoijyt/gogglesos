@@ -18,6 +18,9 @@ does the setup that otherwise has to be done by hand:
   gogglesxr dashboard open the GogglesXR dashboard (in the headset if one is connected,
                       otherwise in a preview window). --overlay draws it on top of the
                       running game; the menu button shows and hides it
+  gogglesxr home      open Goggles Home, the room you are in while no game runs (the app
+                      starts it by itself when a headset connects)
+  gogglesxr vr-state  one word: game (a VR game is running), idle, or no-headset
   gogglesxr library   list the installed games and whether they can run in VR (--json)
   gogglesxr screenshot  save a picture of what the headset shows to Pictures/GogglesXR
   gogglesxr record    start recording what the headset shows, or stop and save (Videos/GogglesXR)
@@ -62,6 +65,8 @@ TITLE = "GogglesXR"
 # The dashboard is a Godot 4 project. Ubuntu only packages Godot 3, so the official Godot 4
 # build is fetched once (checksum pinned here) unless a Godot 4 is already installed.
 DASHBOARD_SRC = "/usr/share/gogglesos/gogglesxr-dashboard"
+HOME_SRC = "/usr/share/gogglesos/gogglesxr-home"          # Goggles Home, also a Godot 4 project
+VR_HELPERS = ("Goggles Home", "GogglesXR Dashboard")      # our own VR apps: never "a game"
 APP_DIR = os.environ.get("GOGGLESXR_APP_DIR") or "/usr/share/gogglesos/gogglesxr"
 DATA = os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local/share"), "gogglesxr")
 GODOT_VERSION = "4.4.1-stable"
@@ -412,6 +417,63 @@ def dashboard(extra=()):
         print("No headset connected, so the dashboard opens in a preview window.\n"
               "For the headset: gogglesxr start, connect the Quest, then run this again.")
     return subprocess.run([godot, "--path", project, *extra], env=env).returncode
+
+
+def home(extra=()):
+    """Goggles Home: the room around you while no game is running."""
+    src = os.environ.get("GOGGLESXR_HOME_SRC") or HOME_SRC
+    if not os.path.isfile(os.path.join(src, "project.godot")):
+        print(f"gogglesxr: Goggles Home isn't installed ({src}). Run: sudo goggles-update", file=sys.stderr)
+        return 1
+    project = os.path.join(DATA, "home")        # Godot keeps a cache next to the project
+    shutil.copytree(src, project, dirs_exist_ok=True, ignore=shutil.ignore_patterns(".godot", "*.import", "*.py"))
+    # What it shares with the dashboard: the night sky, the sounds and the fonts
+    shared = os.environ.get("GOGGLESXR_DASHBOARD_SRC") or DASHBOARD_SRC
+    for folder in ("environments", "sounds", "fonts"):
+        if os.path.isdir(os.path.join(shared, folder)):
+            shutil.copytree(os.path.join(shared, folder), os.path.join(project, folder), dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns("*.py", "*.import"))
+    godot = find_godot() or fetch_godot()
+    if not godot:
+        return 1
+    env = dict(os.environ)
+    env["DISABLE_GOGGLESXR_CAPTURE"] = "1"      # Home isn't a game: no screenshots layer, no "game is drawing" sign
+    if not os.path.exists(IPC_SOCKET):
+        print("No headset connected, so Goggles Home opens in a preview window.")
+    return subprocess.run([godot, "--path", project, *extra], env=env).returncode
+
+
+def game_running(apps=None):
+    """Whether a VR game is running or starting: Steam's launcher has one, a game is drawing
+    (the capture layer's sign, refreshed every 2 s), or the runtime lists a VR app that isn't
+    one of ours. `apps` is the engine's headset()["apps"], if already asked."""
+    try:
+        out = subprocess.run(["pgrep", "-af", "SteamLaunch AppI[d]="], capture_output=True, text=True, timeout=5)
+        if out.returncode == 0 and out.stdout.strip():
+            return True
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        if time.time() - os.path.getmtime(os.path.join(CAPTURE_DIR, "game.status")) < 6:
+            return True
+    except OSError:
+        pass
+    for app in apps or []:
+        if app.get("active") and not app.get("overlay") and app.get("name") not in VR_HELPERS:
+            return True
+    return False
+
+
+def vr_state():
+    info = load_engine().headset()
+    if not (info.get("running") and info.get("connected")):
+        return "no-headset"
+    return "game" if game_running(info.get("apps")) else "idle"
+
+
+def vr_state_command(args):
+    print(vr_state())
+    return 0
 
 
 def _show_all_games():
@@ -1208,7 +1270,8 @@ def main():
                "server": lambda: server_command(sys.argv[2:]),
                "install-headset": lambda: install_headset_command(sys.argv[2:]),
                "bitrate": lambda: bitrate_command(sys.argv[2:]), "quiet": lambda: quiet_command(sys.argv[2:]),
-               "corners": lambda: corners_command(sys.argv[2:])}
+               "corners": lambda: corners_command(sys.argv[2:]),
+               "home": lambda: home(sys.argv[2:]), "vr-state": lambda: vr_state_command(sys.argv[2:])}
     if cmd not in actions:
         print(__doc__.strip(), file=sys.stderr)
         return 2

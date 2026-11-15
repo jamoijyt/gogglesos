@@ -32,8 +32,9 @@ AUTOSTART_SYSTEM = "/etc/xdg/autostart/gogglesxr.desktop"
 AUTOSTART_USER = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(library.HOME, ".config"),
                               "autostart", "gogglesxr.desktop")
 DEFAULTS = {"keep_ready": True, "auto_dashboard": True, "show_all_games": False, "animations": True,
-            "pointer_smoothing": 60, "engine": "wivrn", "environment": "goggles", "environment_image": "",
-            "desktop_screen": "all", "desktop_fps": 30, "pause_corners_in_vr": True}
+            "pointer_smoothing": 60, "engine": "wivrn", "environment": "room", "environment_image": "",
+            "desktop_screen": "all", "desktop_fps": 30, "pause_corners_in_vr": True,
+            "home_offered": False}
 # Recording and screenshot options: (setting, label, [(value, label)], note). The values match
 # CAPTURE_CHOICES in the gogglesxr command, which reads them when a recording starts.
 CAPTURE_OPTIONS = [
@@ -322,11 +323,20 @@ class Window(QMainWindow):
         super().__init__()
         self.tool = tool
         self.settings = load_settings()
+        if not self.settings["home_offered"]:
+            # Goggles Home is new: once, move people from the old default (the night grid picture) to it
+            if self.settings["environment"] == "goggles":
+                self.settings["environment"] = "room"
+            self.settings["home_offered"] = True
+            save_settings(self.settings)
         self.games = []
         self.selected = None
         self.dashboard = None
         self.server = None
         self.dashboard_retry = 0
+        self.home = None                   # Goggles Home, while a headset is connected and no game runs
+        self.home_retry = 0
+        self.home_idle = 0                 # ticks in a row with a headset and no game
         self.corners_paused = False        # the rounded corners effect is out while a headset is connected
         self.corners_busy = False
         self.engine = engines.current()
@@ -746,7 +756,7 @@ class Window(QMainWindow):
                           "on small buttons. Takes effect the next time the dashboard opens.", "muted", True))
 
         f = group("Home environment", "What you see around you in the headset while no game is running.")
-        self.env_combo = self.choice(f, "Surroundings", [("goggles", "Goggles night (built in)"), ("custom", "My 360° picture"),
+        self.env_combo = self.choice(f, "Surroundings", [("room", "Goggles Home (a room)"), ("goggles", "Night grid (360° picture)"), ("custom", "My 360° picture"),
                                                              ("passthrough", "Passthrough (your room)"), ("none", "Black")],
                     self.settings["environment"], lambda v: self.change("environment", v))
         row = QHBoxLayout()
@@ -1152,6 +1162,7 @@ class Window(QMainWindow):
                 command = self.engine.server_command()
                 self.server.start(command[0], command[1:])
         self.follow_corners(connected)
+        self.follow_home(connected and not broken)
         running = self.dashboard is not None and self.dashboard.state() != QProcess.ProcessState.NotRunning
         in_headset = running and bool(self.dashboard.property("overlay"))
         if connected and running and not in_headset and self.settings["auto_dashboard"]:
@@ -1170,6 +1181,30 @@ class Window(QMainWindow):
             # nothing to draw into any more, however it was opened. (It also notices by itself.)
             if in_headset:
                 self.dashboard.terminate()
+
+    def follow_home(self, connected):
+        """Goggles Home runs while a headset is connected and no VR game does. Home leaves by
+        itself when a game starts (it asks every 2 s); this starts it again afterwards, and
+        stops it when the headset has gone or another environment is chosen."""
+        running = self.home is not None and self.home.state() != QProcess.ProcessState.NotRunning
+        wanted = connected and self.settings["environment"] == "room"
+        game = wanted and self.tool.game_running(self.headset.get("apps"))
+        if not wanted or game:
+            self.home_idle = 0
+            self.home_retry = 0
+            if running and not wanted:
+                self.home.terminate()
+            return
+        self.home_idle += 1
+        if running or self.home_idle < 2:      # two quiet ticks: a game that just closed is really gone
+            return
+        if self.home_retry > 0:                # it exited straight away: wait a little before trying again
+            self.home_retry -= 1
+            return
+        self.home_retry = 5
+        self.home = QProcess(self)
+        self.home.setProcessChannelMode(QProcess.ProcessChannelMode.ForwardedChannels)
+        self.home.start(sys.executable, [TOOL, "home"])
 
     def follow_corners(self, connected):
         """Rounded corners out while a headset is connected (see gogglesxr corners), back after."""
@@ -1277,7 +1312,7 @@ class Window(QMainWindow):
     def quit(self):
         if self.corners_paused:
             self.tool.corners("resume")
-        for process in (self.dashboard, self.server):
+        for process in (self.dashboard, self.home, self.server):
             if process is not None and process.state() != QProcess.ProcessState.NotRunning:
                 process.terminate()
         QApplication.quit()

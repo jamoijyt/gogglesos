@@ -391,6 +391,16 @@ if [ -f "$G/gogglesxr/dashboard/project.godot" ]; then
 else
   warn "GogglesXR dashboard sources missing"
 fi
+# Goggles Home (gogglesxr/home): the room you are in while no game runs. Run with: gogglesxr home
+XR_HOME=/usr/share/$DISTRO_ID/gogglesxr-home
+if [ -f "$G/gogglesxr/home/project.godot" ]; then
+  rm -rf "${XR_HOME:?}"; mkdir -p "$XR_HOME"
+  cp -rL "$G"/gogglesxr/home/. "$XR_HOME/"
+  rm -rf "$XR_HOME/.godot"
+  chmod -R u=rwX,go=rX "$XR_HOME"
+else
+  warn "Goggles Home sources missing"
+fi
 # The desktop view (gogglesxr/desktop-grab): pictures of the desktop for the dashboard. KWin only
 # answers programs listed in a desktop file (overlay: org.gogglesos.gogglesxr-desktop-grab.desktop)
 if [ -f "$G/gogglesxr/desktop-grab/gogglesxr-desktop-grab" ]; then

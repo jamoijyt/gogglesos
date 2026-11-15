@@ -613,6 +613,12 @@ func _game_running() -> bool:
 	return false
 
 
+## Goggles Home (gogglesxr/home) is running underneath: it refreshes this file every 2 s.
+func _home_running() -> bool:
+	var sign := OS.get_environment("XDG_RUNTIME_DIR").path_join("gogglesxr-home.status")
+	return FileAccess.file_exists(sign) and Time.get_unix_time_from_system() - FileAccess.get_modified_time(sign) < 6
+
+
 func _capture_status_path() -> String:
 	return OS.get_environment("HOME").path_join(".cache/gogglesxr/capture/game.status")
 
@@ -627,7 +633,7 @@ func _load_home() -> void:
 	_set_passthrough(choice == "passthrough")
 	if choice == "custom":
 		path = str(prefs.get("environment_image", ""))
-	elif choice not in ["none", "passthrough"]:
+	elif choice not in ["none", "passthrough"]:      # "goggles", and "room" until Goggles Home is up
 		path = ProjectSettings.globalize_path(HOME_IMAGE)
 	if path != "":
 		var image := Image.load_from_file(path) if FileAccess.file_exists(path) else null
@@ -665,7 +671,7 @@ func _update_home(force := false) -> void:
 	if world_env == null:
 		return
 	# Over a game (overlay mode) the scene must stay see-through; on its own it is the backdrop
-	var show := home_sky != null and (not overlay or not _game_running())
+	var show := home_sky != null and (not overlay or not (_game_running() or _home_running()))
 	if show == home_shown and not force:
 		return
 	home_shown = show
@@ -2027,6 +2033,21 @@ func _selftest() -> void:
 	check.call("Quick Settings turns passthrough on", prefs.get("environment") == "passthrough" and ui.choice("environment") == "passthrough", str(prefs.get("environment")))
 	ui._passthrough_toggle.button_pressed = false
 	check.call("and off again, back to what was chosen", prefs.get("environment") == "goggles", str(prefs.get("environment")))
+	# Goggles Home underneath draws the surroundings itself
+	var was_overlay := overlay
+	overlay = true
+	var home_sign := OS.get_environment("XDG_RUNTIME_DIR").path_join("gogglesxr-home.status")
+	var sign_file := FileAccess.open(home_sign, FileAccess.WRITE)
+	sign_file.store_line("xr")
+	sign_file.close()
+	_update_home(true)
+	check.call("with Goggles Home running, the dashboard keeps its background clear", _home_running() and world_env.environment.background_mode == Environment.BG_CLEAR_COLOR, "")
+	DirAccess.remove_absolute(home_sign)
+	_update_home(true)
+	check.call("and shows the night sky again when Home has gone", world_env.environment.background_mode == Environment.BG_SKY, "")
+	overlay = was_overlay
+	get_viewport().transparent_bg = overlay
+	_update_home(true)
 	_on_setting("environment", "passthrough")
 	check.call("Passthrough leaves the background see-through", home_sky == null and passthrough and get_viewport().transparent_bg \
 			and world_env.environment.background_color.a == 0.0, "")
