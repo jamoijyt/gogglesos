@@ -109,6 +109,7 @@ var sounds: UISounds
 var headset_lost := 0                     # answers in a row saying the headset or server is gone
 var headset_lost_reason := ""
 var closing := false
+var shown_wait := 0.0
 
 
 func _ready() -> void:
@@ -246,6 +247,7 @@ func _setup_overlay() -> void:
 
 func _set_shown(on: bool) -> void:
 	shown = on
+	_tell_home()
 	if not on:
 		ui.swipe_end()
 		_move_end()
@@ -416,7 +418,22 @@ func _apply_quick_settings() -> void:
 		ui.set_quick("mic_mute", str(out[0]).contains("MUTED"))
 
 
+## Goggles Home (underneath) leaves the controllers alone while the dashboard is open: this
+## file says so, refreshed every few seconds so a crash can't leave Home waiting.
+func _tell_home() -> void:
+	shown_wait = 3.0
+	if not overlay:
+		return
+	var file := FileAccess.open(OS.get_environment("XDG_RUNTIME_DIR").path_join("gogglesxr-dashboard.status"), FileAccess.WRITE)
+	if file:
+		file.store_line("shown" if shown and not closing else "hidden")
+		file.close()
+
+
 func _update_quick(delta: float) -> void:
+	shown_wait -= delta
+	if shown_wait <= 0.0:
+		_tell_home()
 	if bitrate_wait > 0.0:
 		bitrate_wait -= delta
 		if bitrate_wait <= 0.0 and bitrate_thread == null:
@@ -593,6 +610,7 @@ func _close_for(reason: String) -> void:
 	if closing:
 		return
 	closing = true
+	_tell_home()
 	print("GogglesXR dashboard: %s, closing." % reason)
 	desktop_input.stop()
 	get_tree().quit()
@@ -955,6 +973,8 @@ func _parse_game(text: String) -> Dictionary:
 
 
 func _exit_tree() -> void:
+	closing = true
+	_tell_home()                              # the controllers are Home's again
 	if game_thread:
 		game_thread.wait_to_finish()
 	if headset_thread:

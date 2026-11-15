@@ -175,11 +175,9 @@ GogglesXR's aim is the same technology with the setup, updates and interface han
 - **Library:** reads installed games straight from Steam's `appmanifest_*.acf` files and cached artwork. No Steam API key is needed. Shares this code with the dashboard's Library panel.
 - **Milestones** (planned with the test PC's owner, 15 November 2026):
   1. 🔨 **The room.** `gogglesxr/home`: a Goggles-styled room built in code (glass wall onto the night grid, an empty game shelf, lit strips), with the dashboard drawn on top of it as over a game. The GogglesXR app starts it when a headset connects and no game runs; it fades out and quits when a VR game starts (`gogglesxr vr-state`) and comes back two ticks after the game has gone; it closes with the headset. "Goggles Home" is the new default environment (the night grid picture, your own picture, passthrough and black remain). Tested on Monado with the dashboard over it; needs its first headset test.
-  2. **Walking:** teleport and snap turn, smooth movement as an option.
-  3. **Game shelf:** each VR game as a 3D case from its Steam cover art; grab to look, launch from the hand.
-  4. **Furniture and personalising:** a catalogue of CC0 models to place, rotate and remove; your own pictures in frames; the layout is saved.
-  5. **Desktop screens in the room:** popped-out monitors stay where you put them.
-  6. **Themes and sound:** follows Glass/Lite and the accent colour; room styles; ambient music.
+  2. 🔨 **Living in it** (walking, the game shelf, furniture and the room's look, built together). Stick forward teleports where you point and stick sideways turns in steps; smooth walking is a setting. The **Home menu** (B or Y) has a furniture catalogue of 67 CC0 models from Kenney's Furniture Kit with pictures (seating, tables, storage, lights and tech, decor, toys), the room's **look** (what is outside: night grid, clear day, sunset, deep space or your own 360° picture; wall colour, floor, accent colour, how bright the lights are) and settings. Grip picks things up: furniture slides over the floor and onto other furniture, the stick turns it, A or X removes it; toys (ball, blocks, pillows, boxes) can be carried and thrown; the trigger switches lamps. The **game shelf** holds each VR game as a case with its Steam cover: grip takes it, trigger starts it. The room is remembered in `~/.config/gogglesxr/home.json`, and a new home starts with a few pieces. While the dashboard is open, Home leaves the controllers to it. Tested with its self-test (47 checks) and on Monado; needs its first headset test.
+  3. **More to do in the room:** your own pictures in frames, things on the walls, a television that shows the desktop, popped-out monitors that stay where you put them.
+  4. **Themes and sound:** follows Glass/Lite; ambient music; footsteps.
 
 ## Phase 4 — Legacy headsets: Oculus Rift CV1 📋 ❓
 
