@@ -6,6 +6,9 @@ config_version=5
 config/name="GogglesXR Dashboard"
 config/description="The five-panel dashboard for GogglesXR"
 run/main_scene="res://main.tscn"
+; Its own data folder (~/.local/share/gogglesxr-dashboard), whatever the window is called
+config/use_custom_user_dir=true
+config/custom_user_dir_name="gogglesxr-dashboard"
 config/features=PackedStringArray("4.4", "Forward Plus")
 
 [display]

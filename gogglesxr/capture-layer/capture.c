@@ -19,7 +19,15 @@
  *   record.on            "WIDTH HEIGHT FPS [ZOOM]": stream frames into record.fifo while it
  *                        exists. The crop has the WIDTH:HEIGHT shape (16:9, 9:16, 1:1...);
  *                        ZOOM 1 is the widest such crop, smaller values zoom in
- *   game.status          written here: the game that can be captured (refreshed every 2 s)
+ *   mirror.on            "WIDTH FPS": while it exists, write the whole left eye, scaled to
+ *                        WIDTH pixels across, to mirror.raw up to FPS times a second (the
+ *                        dashboard's VR view). mirror.raw: "GXDM", width, height, frame number
+ *                        (32-bit little-endian), the eye's field of view (left, right, up, down
+ *                        angles in radians, 32-bit floats), then width x height RGBA pixels;
+ *                        replaced in one step, never half-written
+ *   game.status          written here: the game that can be captured (refreshed every 2 s);
+ *                        not by apps started with GOGGLESXR_CAPTURE_NO_STATUS=1 (Goggles Home,
+ *                        which isn't a game but can be mirrored)
  *
  * Built with one gcc command (build.sh), with older glibc symbol versions so it also loads
  * inside Steam's game containers. Switch it off for one game with DISABLE_GOGGLESXR_CAPTURE=1.
@@ -59,6 +67,7 @@ __asm__(".symver pthread_sigmask,pthread_sigmask@GLIBC_2.2.5");
 #define MAX_SWAPCHAINS 64
 #define MAX_IMAGES 8
 #define RECORD_SLOTS 3
+#define MIRROR_SLOTS 2
 
 static void say(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 #include <stdarg.h>
@@ -183,6 +192,12 @@ typedef struct session_rec {
 	double rec_interval, rec_last;
 	target shot;
 	target slots[RECORD_SLOTS];
+	bool mirroring;
+	uint32_t mir_w;
+	double mir_interval, mir_last;
+	uint32_t mir_frame;
+	target mir_slots[MIRROR_SLOTS];
+	XrFovf mir_fov[MIRROR_SLOTS];
 	double status_written;
 	int writer_jobs; /* frames of this session still being written out */
 } session_rec;
@@ -203,6 +218,7 @@ static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static session_rec sessions[MAX_SESSIONS];
 static swapchain_rec swapchains[MAX_SWAPCHAINS];
 static char app_name[XR_MAX_APPLICATION_NAME_SIZE];
+static bool no_status; /* GOGGLESXR_CAPTURE_NO_STATUS: not a game (Goggles Home) */
 
 static PFN_xrGetInstanceProcAddr next_gipa;
 static PFN_xrCreateSession next_CreateSession;
@@ -791,6 +807,76 @@ static void collect_frames(session_rec *s, bool wait)
 	}
 }
 
+/* The whole left eye, small, for the dashboard's VR view */
+static void mirror_frame(session_rec *s, swapchain_rec *sc, VkImage src)
+{
+	double now = now_seconds();
+	if (now - s->mir_last < s->mir_interval * 0.9)
+		return;
+	int slot_index = -1;
+	for (int i = 0; i < MIRROR_SLOTS; i++)
+		if (s->mir_slots[i].state == 0) {
+			slot_index = i;
+			break;
+		}
+	if (slot_index < 0)
+		return;
+	target *slot = &s->mir_slots[slot_index];
+	XrRect2Di eye = s->eye_rect;
+	if (eye.extent.width <= 0 || eye.extent.height <= 0)
+		return;
+	uint32_t w = s->mir_w & ~1u;
+	uint32_t h = (uint32_t)((double)w * eye.extent.height / eye.extent.width) & ~1u;
+	if (w < 16 || h < 16 || !target_make(s, slot, w, h, copy_format(sc->format)))
+		return;
+	if (!copy_eye(s, sc, src, eye, slot))
+		return;
+	s->mir_fov[slot_index] = s->eye_fov;
+	s->mir_last = now;
+	slot->state = 1;
+}
+
+static void put_u32(char *p, uint32_t v)
+{
+	p[0] = (char)(v & 0xff);
+	p[1] = (char)((v >> 8) & 0xff);
+	p[2] = (char)((v >> 16) & 0xff);
+	p[3] = (char)((v >> 24) & 0xff);
+}
+
+/* Finished mirror pictures become files (written by the writer thread) */
+static void collect_mirror(session_rec *s)
+{
+	for (int i = 0; i < MIRROR_SLOTS; i++) {
+		target *t = &s->mir_slots[i];
+		if (t->state != 1 || s->fn.GetFenceStatus(s->device, t->fence) != VK_SUCCESS)
+			continue;
+		make_visible(s, t);
+		size_t pixels = (size_t)t->w * t->h * 4;
+		job *j = calloc(1, sizeof *j);
+		char *data = malloc(32 + pixels);
+		if (!j || !data) {
+			free(j);
+			free(data);
+			t->state = 0;
+			continue;
+		}
+		memcpy(data, "GXDM", 4);
+		put_u32(data + 4, t->w);
+		put_u32(data + 8, t->h);
+		put_u32(data + 12, ++s->mir_frame);
+		float fov[4] = {s->mir_fov[i].angleLeft, s->mir_fov[i].angleRight, s->mir_fov[i].angleUp, s->mir_fov[i].angleDown};
+		memcpy(data + 16, fov, sizeof fov);
+		memcpy(data + 32, t->map, pixels);
+		t->state = 0;
+		j->kind = JOB_FILE;
+		j->data = data;
+		j->size = 32 + pixels;
+		path_of(j->path, sizeof j->path, "mirror.raw");
+		push_job(j);
+	}
+}
+
 static void stop_recording(session_rec *s)
 {
 	if (!s->recording)
@@ -804,7 +890,7 @@ static void stop_recording(session_rec *s)
 
 static void write_status(session_rec *s, double now)
 {
-	if (now - s->status_written < 2.0)
+	if (no_status || now - s->status_written < 2.0)
 		return;
 	s->status_written = now;
 	char path[600], text[400];
@@ -867,6 +953,31 @@ static void check_requests(session_rec *s)
 	} else if (!want && s->recording) {
 		stop_recording(s);
 	}
+	bool mirror = file_exists("mirror.on");
+	if (mirror && !s->mirroring) {
+		char path[600];
+		path_of(path, sizeof path, "mirror.on");
+		unsigned w = 960, fps = 30;
+		FILE *fp = fopen(path, "r");
+		if (fp) {
+			if (fscanf(fp, "%u %u", &w, &fps) < 2) {
+				w = 960;
+				fps = 30;
+			}
+			fclose(fp);
+		}
+		if (w < 64 || w > 4096)
+			w = 960;
+		if (fps < 1 || fps > 90)
+			fps = 30;
+		s->mir_w = w;
+		s->mir_interval = 1.0 / fps;
+		s->mir_last = 0;
+		s->mirroring = true;
+		say("mirroring the view, %u pixels across at %u fps", w, fps);
+	} else if (!mirror && s->mirroring) {
+		s->mirroring = false;
+	}
 }
 
 static void session_free(session_rec *s)
@@ -891,9 +1002,14 @@ static void session_free(session_rec *s)
 		target_free(s, &s->shot);
 		for (int i = 0; i < RECORD_SLOTS; i++)
 			target_free(s, &s->slots[i]);
+		for (int i = 0; i < MIRROR_SLOTS; i++) {
+			if (s->mir_slots[i].fence)
+				s->fn.WaitForFences(s->device, 1, &s->mir_slots[i].fence, VK_TRUE, 1000000000ull);
+			target_free(s, &s->mir_slots[i]);
+		}
 		s->fn.DestroyCommandPool(s->device, s->pool, NULL);
 	}
-	if (s->capture) {
+	if (s->capture && !no_status) {
 		char path[600];
 		path_of(path, sizeof path, "game.status");
 		unlink(path);
@@ -1042,12 +1158,14 @@ static XRAPI_ATTR XrResult XRAPI_CALL hook_ReleaseSwapchainImage(XrSwapchain swa
 		sc->acquired_head = (sc->acquired_head + 1) % MAX_IMAGES;
 		sc->acquired_count--;
 		session_rec *s = sc->session;
-		if (s && s->eye_swapchain == swapchain && (s->shot_pending || s->recording) && index < sc->image_count && vk_setup(s)) {
+		if (s && s->eye_swapchain == swapchain && (s->shot_pending || s->recording || s->mirroring) && index < sc->image_count && vk_setup(s)) {
 			VkImage image = sc->images[index];
 			if (s->shot_pending)
 				take_screenshot(s, sc, image);
 			if (s->recording)
 				record_frame(s, sc, image);
+			if (s->mirroring)
+				mirror_frame(s, sc, image);
 		}
 	}
 	pthread_mutex_unlock(&lock);
@@ -1081,6 +1199,8 @@ static XRAPI_ATTR XrResult XRAPI_CALL hook_EndFrame(XrSession session, const XrF
 		check_requests(s);
 		if (s->recording && s->vk_ready)
 			collect_frames(s, false);
+		if (s->vk_ready)
+			collect_mirror(s);
 	}
 	pthread_mutex_unlock(&lock);
 	return next_EndFrame(session, info);
@@ -1123,6 +1243,8 @@ static XRAPI_ATTR XrResult XRAPI_CALL layer_CreateApiLayerInstance(const XrInsta
 		return result;
 	next_gipa = layer_info->nextInfo->nextGetInstanceProcAddr;
 	snprintf(app_name, sizeof app_name, "%s", info->applicationInfo.applicationName);
+	const char *quiet = getenv("GOGGLESXR_CAPTURE_NO_STATUS");
+	no_status = quiet && quiet[0] && strcmp(quiet, "0") != 0;
 	make_dirs();
 	/* Resolve the functions we pass on, so they work even if the app looks them up directly */
 	PFN_xrVoidFunction unused;

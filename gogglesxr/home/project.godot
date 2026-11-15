@@ -7,6 +7,9 @@ config_version=5
 config/name="Goggles Home"
 config/description="The home space of GogglesXR"
 run/main_scene="res://main.tscn"
+; Its own data folder (~/.local/share/gogglesxr-home), whatever the window is called
+config/use_custom_user_dir=true
+config/custom_user_dir_name="gogglesxr-home"
 config/features=PackedStringArray("4.4", "Forward Plus")
 
 [display]
