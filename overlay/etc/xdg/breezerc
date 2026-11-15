@@ -1,0 +1,10 @@
+# Goggles OS: the rounded corners effect (KDE-Rounded-Corners, "ShapeCorners") draws window
+# corners and outlines itself and wants Breeze's own off. Left to itself it rewrites these three
+# settings every time KWin loads or unloads it, then asks KWin to reload everything, and when
+# that lands while KWin is already reloading its effects (as it does under VR load) KWin can
+# crash. Fixed here ([$i] = users can't change them), the effect finds them already set and has
+# nothing to rewrite. Removed again by apply-system.sh when the effect isn't installed.
+[Common]
+OutlineIntensity[$i]=OutlineOff
+OutlineEnabled[$i]=false
+RoundedCorners[$i]=false

@@ -20,7 +20,7 @@ Status key: ✅ done · 🔨 in progress · 📋 planned · ⚠️ limited / nee
 | **Glass** mode (default) | 🔨 | Kvantum "GogglesGlass" theme: translucent, blurred windows and menus; KWin blur, background contrast and translucency effects; floating translucent panel; green accent |
 | **Lite** mode | 🔨 | Breeze, opaque windows and panel, no blur, quicker animations |
 | Glass/Lite choice in the installer | 🔨 | New "Appearance" page in Calamares; switch later with **Goggles Appearance** (`goggles-theme glass\|lite`) |
-| Rounded corners | 🔨 | KDE-Rounded-Corners from its author's PPA (14 px corners, soft green outline on the active window). The PPA is rebuilt for each KWin update, so installed systems keep working |
+| Rounded corners | 🔨 | KDE-Rounded-Corners from its author's PPA (14 px corners, soft green outline on the active window). The PPA is rebuilt for each KWin update, so installed systems keep working. The effect rewrote Breeze's settings and made KWin reload every time it loaded or unloaded, which could crash KWin under VR load (Bonelab, 13 November 2026): those settings are now fixed system-wide (`/etc/xdg/breezerc`), and the GogglesXR app pauses the effect while a headset is connected (`gogglesxr corners`; can be switched off in VR settings) |
 | Animations | 🔨 | Scale open/close, Magic Lamp minimise, sliding popups, 0.85× duration (Lite: 0.6×) |
 | Remove Kubuntu desktop links | 🔨 | |
 | VR runtime | ✅ | GogglesXR is preinstalled and set up by the OS (see Phase 2). The earlier SteamVR-based setup (Install SteamVR, Goggles VR Setup) has been removed |

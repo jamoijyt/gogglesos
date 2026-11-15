@@ -33,7 +33,7 @@ AUTOSTART_USER = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(
                               "autostart", "gogglesxr.desktop")
 DEFAULTS = {"keep_ready": True, "auto_dashboard": True, "show_all_games": False, "animations": True,
             "pointer_smoothing": 60, "engine": "wivrn", "environment": "goggles", "environment_image": "",
-            "desktop_screen": "all", "desktop_fps": 30}
+            "desktop_screen": "all", "desktop_fps": 30, "pause_corners_in_vr": True}
 # Recording and screenshot options: (setting, label, [(value, label)], note). The values match
 # CAPTURE_CHOICES in the gogglesxr command, which reads them when a recording starts.
 CAPTURE_OPTIONS = [
@@ -327,6 +327,8 @@ class Window(QMainWindow):
         self.dashboard = None
         self.server = None
         self.dashboard_retry = 0
+        self.corners_paused = False        # the rounded corners effect is out while a headset is connected
+        self.corners_busy = False
         self.engine = engines.current()
         self.headset = {}                  # the engine's last headset() answer
         self.headset_polling = False
@@ -721,6 +723,10 @@ class Window(QMainWindow):
         self.s_dash = toggle(f, "Open the dashboard in the headset automatically",
                              "Starts the dashboard on top of your game when a headset connects. The menu button shows and hides it.",
                              self.settings["auto_dashboard"], lambda on: self.change("auto_dashboard", on))
+        self.s_corners = toggle(f, "Pause rounded window corners while a headset is connected",
+                                "The rounded corners effect can crash the desktop under VR load (seen with Bonelab). "
+                                "It comes back when the headset disconnects.",
+                                self.settings["pause_corners_in_vr"], lambda on: self.change("pause_corners_in_vr", on))
         self.s_all = toggle(f, "Show non-VR games in the headset's library",
                             "By default the headset only lists games that can run in VR.",
                             self.settings["show_all_games"], lambda on: self.change("show_all_games", on))
@@ -1145,6 +1151,7 @@ class Window(QMainWindow):
                 self.server = QProcess(self)
                 command = self.engine.server_command()
                 self.server.start(command[0], command[1:])
+        self.follow_corners(connected)
         running = self.dashboard is not None and self.dashboard.state() != QProcess.ProcessState.NotRunning
         in_headset = running and bool(self.dashboard.property("overlay"))
         if connected and running and not in_headset and self.settings["auto_dashboard"]:
@@ -1163,6 +1170,19 @@ class Window(QMainWindow):
             # nothing to draw into any more, however it was opened. (It also notices by itself.)
             if in_headset:
                 self.dashboard.terminate()
+
+    def follow_corners(self, connected):
+        """Rounded corners out while a headset is connected (see gogglesxr corners), back after."""
+        want_paused = connected and self.settings["pause_corners_in_vr"]
+        if self.corners_busy or want_paused == self.corners_paused:
+            return
+        self.corners_busy = True
+
+        def done(result):
+            # one try per change (no KWin, no effect: nothing to retry every few seconds)
+            self.corners_busy = False
+            self.corners_paused = want_paused
+        self.run_bg(lambda: self.tool.corners("pause" if want_paused else "resume"), done)
 
     def start_dashboard(self, manual=False):
         if self.dashboard is not None and self.dashboard.state() != QProcess.ProcessState.NotRunning:
@@ -1255,6 +1275,8 @@ class Window(QMainWindow):
             event.accept()
 
     def quit(self):
+        if self.corners_paused:
+            self.tool.corners("resume")
         for process in (self.dashboard, self.server):
             if process is not None and process.state() != QProcess.ProcessState.NotRunning:
                 process.terminate()

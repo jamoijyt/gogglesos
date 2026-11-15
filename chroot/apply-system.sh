@@ -163,6 +163,11 @@ if [ ! -f /etc/apt/sources.list.d/matinlotfali-ubuntu-kde-rounded-corners-$DISTR
 fi
 apt-get update -qq
 "${APT[@]}" install kwin-effect-roundcorners || warn "rounded-corners effect not installed (Breeze's own rounding still applies)"
+# /etc/xdg/breezerc (overlay) fixes the Breeze settings the effect would otherwise keep rewriting
+# (see that file). Without the effect, Breeze should round and outline windows itself.
+if [ ! -f /usr/lib/x86_64-linux-gnu/qt6/plugins/kwin/effects/plugins/kwin4_effect_shapecorners.so ]; then
+  rm -f /etc/xdg/breezerc
+fi
 
 # Kvantum "GogglesGlass": KvFlat (dark, Breeze-like) + translucency, blur and Goggles colours
 KV=/usr/share/Kvantum
